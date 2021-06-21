@@ -1,6 +1,8 @@
 /*
 Description: Convert time to the timezones for mentioned users.
 
+Package URL: https://ab.bot/packages/aseriousbiz/tz
+
 Usage:
 
 `@abbot tz` _replies with the current time in Abbot's timezone_
