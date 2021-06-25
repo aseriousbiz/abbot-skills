@@ -9,7 +9,6 @@ Usage:
 `@abbot github billing {org-or-user}` - reports billing info for the specified organization or user. _Requires that a secret named `GitHubToken` be set with `admin:org` permission for orgs and `user` scope if reporting on a user._
 
 */
-
 using Octokit;
 
 const string DefaultRepository = nameof(DefaultRepository);
@@ -35,6 +34,7 @@ Task action = (cmd, arg) switch {
         ({Value: "default"}, _) => GetOrSetDefaultRepoAsync(arg),
         ({Value: "billing"}, _) => ReplyWithBillingInfoAsync(arg),
         ({Value: "issue"}, _) => HandleIssueSubCommandAsync(Bot.Arguments.Skip(1)),
+        ({Value: "user"}, _) => MapGitHubUserToChatUser(Bot.Arguments.Skip(1)),
         _ => ReplyWithUsage()
 };
 await action;
@@ -44,10 +44,51 @@ async Task HandleIssueSubCommandAsync(IArguments arguments) {
         (IMissingArgument, _) => Bot.ReplyAsync("`@abbot help github` to learn how to use this skill."),
         ({Value: "triage"}, _) => ReplyWithIssueTriageAsync(null),
         ({Value: "assign"}, _) => AssignIssueAndReplyAsync(arguments.Skip(1)),
+        ({Value: "user"}, _) => MapGitHubUserToChatUser(arguments.Skip(1)),
         var (issueNumber, repo) => ReplyWithIssueAsync(issueNumber, repo)
     };
     
     await result;
+}
+
+async Task MapGitHubUserToChatUser(IArguments args) {
+    var (user, preposition, mapping) = args;
+    if (mapping is IMissingArgument) { // Preposition is optional.
+        mapping = preposition;
+    }
+    
+    Task task = (user, mapping) switch {
+        (IMissingArgument, _) => Bot.ReplyAsync("Please supply both a GitHub username and a chat user"),
+        (_, IMissingArgument) => Bot.ReplyAsync("Please supply both a GitHub username and a chat user"),
+        (IMentionArgument, IMentionArgument) => Bot.ReplyAsync("You specified two chat users. One should be a GitHub username without the `@` sign."),
+        (IMentionArgument mention, var githubUser) => MapGitHubUserToChatUser(githubUser.Value, mention.Mentioned),
+        (var githubUser, IMentionArgument mention) => MapGitHubUserToChatUser(githubUser.Value, mention.Mentioned),
+        (_, _) => Bot.ReplyAsync("You specified two GitHub users. One should be a GitHub username without the `@` sign and the other should be a chat user mention."),
+    };
+    await task;
+}
+
+async Task MapGitHubUserToChatUser(string githubUsername, IChatUser chatUser) {
+    try {
+        var user = await github.User.Get(githubUsername);
+        await Bot.Brain.WriteAsync(GetUserMapKey(chatUser), githubUsername);
+        await Bot.ReplyAsync($"Mapped {chatUser} to GitHub user {githubUsername}.");
+    }
+    catch (NotFoundException) {
+        await Bot.ReplyAsync($"GitHub tells me {githubUsername} does not exist.");
+    }
+}
+
+async Task<string> GetGitHubUserNameForMention(IChatUser mentioned) {
+    var username = await Bot.Brain.GetAsync(GetUserMapKey(mentioned));
+    if (username is null) {
+        await Bot.ReplyAsync($"I don't know the GitHub username for {mentioned}. `@abbot github user {{mention}} is {{github-username}}` to tell me.");
+    }
+    return username;
+}
+
+string GetUserMapKey(IChatUser user) {
+    return $"user:{user.Id}";
 }
 
 async Task AssignIssueAndReplyAsync(IArguments args) {
@@ -66,14 +107,23 @@ async Task AssignIssueAndReplyAsync(IArguments args) {
     Task task = (issueNumber, assigneeArg, owner, repo) switch {
         (null, _, _, _) => Bot.ReplyAsync($"Please provide an issue number and an assignee. `-{numArg.Value}-` {assigneeArg}"),
         (_, IMissingArgument, _, _) => Bot.ReplyAsync("Please provide an assignee."),
-        (_, _, _, _) => AssignIssue(issueNumber.Value, assigneeArg.Value, owner, repo)
+        (_, _, _, _) => AssignIssue(issueNumber.Value, assigneeArg, owner, repo)
     };
     await task;
 }
 
-async Task AssignIssue(int issueNumber, string assignee, string owner, string repo) {
+async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, string repo) {
     if (owner is null || repo is null) {
         await Bot.ReplyAsync($"Please specify which repository this is for or set a default repository first. `@abbot help github` to learn more.");
+        return;
+    }
+    
+    var assignee = assigneeArg is IMentionArgument mentionArgument
+        ? await GetGitHubUserNameForMention(mentionArgument.Mentioned)
+        : assigneeArg.Value;
+    
+    if (assignee is null) {
+        // GetGitHubUserNameForMention will have reported the problem.
         return;
     }
     
