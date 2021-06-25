@@ -6,16 +6,14 @@ Usage:
 `@abbot github user {{mention}} is {{github-username}}` to map a chat user to their GitHub username.
 `@abbot github issue triage [{owner}/{repo}]` - Retrieves unassigned issues. Limited to 20.
 `@abbot github issue #{number} [{owner}/{repo}]` - retrieves the issue by the issue number. `{owner}/{repo}` is not needed if the default repo is set.
-`@abbot github issue assign #{number} to {assignee} [{owner}/{repo}]` - assigns {assignee} to the issue.
+`@abbot github issue assign #{number} to {assignee} [{owner}/{repo}]` - assigns {assignee} to the issue. {assignee} could be a chat user, a GitHub username without the `@` prefix, or "me".
+`@abbot github issues assigned to {assignee}` - Retrieves open issues assigned to {assignee}. {assignee} could be a chat user, a GitHub username without the `@` prefix, or "me". 
 `@abbot github billing {org-or-user}` - reports billing info for the specified organization or user. _Requires that a secret named `GitHubToken` be set with `admin:org` permission for orgs and `user` scope if reporting on a user._
-
 */
 using Octokit;
 
 const string DefaultRepository = nameof(DefaultRepository);
-bool isOrg = true;
 var githubToken = await Bot.Secrets.GetAsync("GitHubToken");
-var baseUrl = "https://api.github.com/";
 
 if (githubToken is not {Length: > 0}) {
     await Bot.ReplyAsync("This skill requires a GitHub Developer Token set up as a secret. "
@@ -29,14 +27,17 @@ var github = new GitHubClient(new ProductHeaderValue("Abbot")) {
     Credentials = new Credentials(githubToken)
 };
 
+/*-----------------------------------
+MAIN ENTRY POINT
+*-----------------------------------*/
 var (cmd, arg) = Bot.Arguments;
 
 Task action = (cmd, arg) switch {
-        ({Value: "default"}, _) => GetOrSetDefaultRepoAsync(arg),
-        ({Value: "billing"}, _) => ReplyWithBillingInfoAsync(arg),
-        ({Value: "issue"}, _) => HandleIssueSubCommandAsync(Bot.Arguments.Skip(1)),
-        ({Value: "user"}, _) => MapGitHubUserToChatUser(Bot.Arguments.Skip(1)),
-        _ => ReplyWithUsage()
+    ({Value: "default"}, _) => GetOrSetDefaultRepoAsync(Bot.Arguments.Skip(1)),
+    ({Value: "billing"}, _) => ReplyWithBillingInfoAsync(arg),
+    ({Value: "issue"} or {Value: "issues"}, _) => HandleIssueSubCommandAsync(Bot.Arguments.Skip(1)),
+    ({Value: "user"}, _) => MapGitHubUserToChatUser(Bot.Arguments.Skip(1)),
+    _ => ReplyWithUsage()
 };
 await action;
 
@@ -45,6 +46,7 @@ async Task HandleIssueSubCommandAsync(IArguments arguments) {
         (IMissingArgument, _) => Bot.ReplyAsync("`@abbot help github` to learn how to use this skill."),
         ({Value: "triage"}, _) => ReplyWithIssueTriageAsync(null),
         ({Value: "assign"}, _) => AssignIssueAndReplyAsync(arguments.Skip(1)),
+        ({Value: "assigned"}, _) => ReplyWithAssignedIssues(arguments.Skip(1)),
         ({Value: "user"}, _) => MapGitHubUserToChatUser(arguments.Skip(1)),
         var (issueNumber, repo) => ReplyWithIssueAsync(issueNumber, repo)
     };
@@ -119,10 +121,7 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
         return;
     }
     
-    var assignee = assigneeArg is IMentionArgument mentionArgument
-        ? await GetGitHubUserNameForMention(mentionArgument.Mentioned)
-        : assigneeArg.Value;
-    
+    var assignee = await GetAssigneeFromArgument(assigneeArg);
     if (assignee is null) {
         // GetGitHubUserNameForMention will have reported the problem.
         return;
@@ -141,6 +140,51 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
     await Bot.ReplyAsync($"Assigned {issueNumber} to {assignee}.");
 }
 
+async Task ReplyWithAssignedIssues(IArguments args) {
+    var (prepositionArg, assigneeArg, forArg, repoArg) = args;
+    // User can ask `@abbot github issues assigned to me` or `@abbot github issues assigned me` 
+    if (assigneeArg is IMissingArgument) {
+        // Move arguments up by one.
+        repoArg = forArg;
+        forArg = assigneeArg;
+        assigneeArg = prepositionArg;
+    }
+    
+    if (repoArg is IMissingArgument) {
+        // User can ask `@abbot github issues assigned to me for aseriousbiz/abbot-skills` or `@abbot github issues assigned me aseriousbiz/abbot-skills` 
+        repoArg = forArg;
+    }
+    
+    var assignee = await GetAssigneeFromArgument(assigneeArg);
+    if (assignee is null) {
+        // GetGitHubUserNameForMention will have reported the problem.
+        return;
+    }
+    
+    var (owner, repo) = await GetRepoOrDefault(repoArg);
+    
+    var request = new RepositoryIssueRequest {
+        Assignee = assignee,
+        State = ItemStateFilter.Open,
+        Filter = IssueFilter.All
+    };
+    var apiOptions = new ApiOptions {
+        PageSize = 20,
+        PageCount = 1
+    };
+    var issues = await github.Issue.GetAllForRepository(owner, repo, request, apiOptions);
+    if (issues is {Count: 0}) {
+        var assigneeOut = assigneeArg is {Value: "me"}
+            ? "you"
+            : assignee;
+        await Bot.ReplyAsync($"Good job! No open issues assigned to {assigneeOut}.");
+        return;
+    }
+    var reply = issues.Select(FormatIssue).ToMarkdownList();
+    await Bot.ReplyAsync(reply);
+}
+
+// Return all open and unassigend issues in the repository.
 async Task ReplyWithIssueTriageAsync(string repository) {
     var (owner, repo) = ParseNameWithOwner(repository);
 
@@ -149,8 +193,8 @@ async Task ReplyWithIssueTriageAsync(string repository) {
         return;
     }
     var request = new RepositoryIssueRequest {
-         Assignee = "none",
-        Milestone = "none",
+        Assignee = "none",
+        State = ItemStateFilter.Open,
         Filter = IssueFilter.All
     };
     var apiOptions = new ApiOptions {
@@ -188,7 +232,6 @@ async Task ReplyWithIssueAsync(IArgument numArg, IArgument repository) {
     }
 }
 
-
 async Task ReplyWithBillingInfoAsync(IArgument userOrOrgArg) {
     var userOrOrg = userOrOrgArg.Value;
     if (userOrOrgArg is IMissingArgument) {
@@ -198,14 +241,14 @@ async Task ReplyWithBillingInfoAsync(IArgument userOrOrgArg) {
     
     var isOrg = await IsOrgAsync(userOrOrg);
     
-    var baseApiUrl = baseUrl
+    var billingBaseApiUrl = github.BaseAddress
         + (isOrg ? "orgs" : "users")
         + $"/{userOrOrg}/settings/billing/";
     
     var apiRequests = new Task<dynamic>[] {
-        GetBillingInfoAsync(baseApiUrl, "actions"),
-        GetBillingInfoAsync(baseApiUrl, "packages"),
-        GetBillingInfoAsync(baseApiUrl, "shared-storage")
+        GetBillingInfoAsync(billingBaseApiUrl, "actions"),
+        GetBillingInfoAsync(billingBaseApiUrl, "packages"),
+        GetBillingInfoAsync(billingBaseApiUrl, "shared-storage")
     };
     
     var responses = await Task.WhenAll(apiRequests);
@@ -237,6 +280,8 @@ Estimated Storage for Month     : {storage.estimated_storage_for_month}
 ```
 ");
 }
+
+bool isOrg = true; // Only applies to the Billing API call
 
 async Task<dynamic> GetBillingInfoAsync(string baseApiUrl, string endpoint) {
     var headers = new Headers {
@@ -304,16 +349,23 @@ string FormatAssignee(User user) {
 
 async Task<bool> IsOrgAsync(string org) {
     try {
-        var organization = await Bot.Http.GetJsonAsync(new Uri(baseUrl + $"orgs/{org}"));
+        var organization = await github.Organization.Get(org);
         return organization is not null;
     }
-    catch (HttpRequestException) {
+    catch (NotFoundException) {
         return false;
     }
 }
 
-async Task GetOrSetDefaultRepoAsync(IArgument nameWithOwner) {
-    if (nameWithOwner is IMissingArgument) {
+async Task GetOrSetDefaultRepoAsync(IArguments args) {
+    var (isArg, repoArg) = args;
+    
+    if (repoArg is IMissingArgument) {
+        // We support "@abbot default is aseriousbiz/abbot-skills" and "@abbot default aseriousbiz/abbot-skills"
+        repoArg = isArg;
+    }
+    
+    if (repoArg is IMissingArgument) {
         var currentDefault = await GetDefaultRepoAsync();
         if (currentDefault is null) {
             await Bot.ReplyAsync("There is no default repository set for this channel yet. `@abbot github default owner/repo` to set a default repository.");
@@ -323,13 +375,21 @@ async Task GetOrSetDefaultRepoAsync(IArgument nameWithOwner) {
         }
         return;
     }
-    var (owner, repo) = ParseNameWithOwner(nameWithOwner);
+    var (owner, repo) = ParseNameWithOwner(repoArg);
     if (owner is null || repo is null) {
         await Bot.ReplyAsync("To set a default repository, make sure the repository is provided in the `owner/repo` format.");
         return;
     }
-    await WriteDefaultRepoAsync(nameWithOwner.Value);
-    await Bot.ReplyAsync($"`{nameWithOwner}` is now the default repository.");
+    
+    try {
+        var repository = await github.Repository.Get(owner, repo);
+    }
+    catch (NotFoundException) {
+        await Bot.ReplyAsync($"{repoArg} doesn't seem to be a repository or access is denied. Check your GitHub Token permissions.");
+        return;
+    }
+    await WriteDefaultRepoAsync(repoArg.Value);
+    await Bot.ReplyAsync($"`{repoArg}` is now the default repository.");
 }
 
 async Task<string> GetDefaultRepoAsync() {
@@ -342,4 +402,12 @@ async Task WriteDefaultRepoAsync(string repo) {
 
 string GetDefaultRepositoryStorageKey() {
     return $"{Bot.Room}|{DefaultRepository}";
+}
+
+async Task<string> GetAssigneeFromArgument(IArgument assigneeArg) {
+    return assigneeArg switch {
+        {Value: "me"} or {Value: "mi"} or {Value: "moi"} => await GetGitHubUserNameForMention(Bot.From),
+        IMentionArgument mentioned => await GetGitHubUserNameForMention(mentioned.Mentioned),
+        _ => assigneeArg.Value
+    };
 }
