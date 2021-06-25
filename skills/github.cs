@@ -3,6 +3,7 @@ Description: Useful skill for GitHub customers. Retrieve and assign issues. Get 
 
 Usage:
 `@abbot github default {owner}/{repo}` - sets the default repository for this skill for the current room.
+`@abbot github user {{mention}} is {{github-username}}` to map a chat user to their GitHub username.
 `@abbot github issue triage [{owner}/{repo}]` - Retrieves unassigned issues. Limited to 20.
 `@abbot github issue #{number} [{owner}/{repo}]` - retrieves the issue by the issue number. `{owner}/{repo}` is not needed if the default repo is set.
 `@abbot github issue assign #{number} to {assignee} [{owner}/{repo}]` - assigns {assignee} to the issue.
