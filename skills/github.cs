@@ -12,9 +12,13 @@ Usage:
 */
 using Octokit;
 
-const string DefaultRepository = nameof(DefaultRepository);
-var githubToken = await Bot.Secrets.GetAsync("GitHubToken");
+// The key used to store and retrieve the default repository.
+// Embedding the room name ensures the default repository is per-room so
+// each room can have its own default.
+readonly string DefaultRepositoryBrainKey = $"{Bot.Room}|DefaultRepository";
 
+// GitHub Developer Token with access to the repository and org to query.
+var githubToken = await Bot.Secrets.GetAsync("GitHubToken");
 if (githubToken is not {Length: > 0}) {
     await Bot.ReplyAsync("This skill requires a GitHub Developer Token set up as a secret. "
          + "Visit https://github.com/settings/tokens to create a token. "
@@ -23,6 +27,7 @@ if (githubToken is not {Length: > 0}) {
 }
 
 // For GitHub Enterprise, pass in the Base URL after the ProductHeaderValue argument.
+// TODO: Make the API url settable so GitHub Enterprise users don't have to edit the skill.
 var github = new GitHubClient(new ProductHeaderValue("Abbot")) {
     Credentials = new Credentials(githubToken)
 };
@@ -393,15 +398,11 @@ async Task GetOrSetDefaultRepoAsync(IArguments args) {
 }
 
 async Task<string> GetDefaultRepoAsync() {
-    return await Bot.Brain.GetAsync(GetDefaultRepositoryStorageKey());
+    return await Bot.Brain.GetAsync(DefaultRepositoryBrainKey);
 }
 
 async Task WriteDefaultRepoAsync(string repo) {
-    await Bot.Brain.WriteAsync(GetDefaultRepositoryStorageKey(), repo);
-}
-
-string GetDefaultRepositoryStorageKey() {
-    return $"{Bot.Room}|{DefaultRepository}";
+    await Bot.Brain.WriteAsync(DefaultRepositoryBrainKey, repo);
 }
 
 async Task<string> GetAssigneeFromArgument(IArgument assigneeArg) {
