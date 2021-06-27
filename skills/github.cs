@@ -10,6 +10,7 @@ Usage:
 `@abbot github issues assigned to {assignee}` - Retrieves open issues assigned to {assignee}. {assignee} could be a chat user, a GitHub username without the `@` prefix, or "me". 
 `@abbot github billing {org-or-user}` - reports billing info for the specified organization or user. _Requires that a secret named `GitHubToken` be set with `admin:org` permission for orgs and `user` scope if reporting on a user._
 */
+
 using Octokit;
 
 // The key used to store and retrieve the default repository.
@@ -39,7 +40,7 @@ var (cmd, arg) = Bot.Arguments;
 
 Task action = (cmd, arg) switch {
     ({Value: "default"}, _) => GetOrSetDefaultRepoAsync(Bot.Arguments.Skip(1)),
-    ({Value: "billing"}, _) => ReplyWithBillingInfoAsync(arg),
+    ({Value: "billing"}, _) => ReplyWithBillingInfoAsync(Bot.Arguments.Skip(1)),
     ({Value: "issue"} or {Value: "issues"}, _) => HandleIssueSubCommandAsync(Bot.Arguments.Skip(1)),
     ({Value: "user"}, _) => MapGitHubUserToChatUser(Bot.Arguments.Skip(1)),
     _ => ReplyWithUsage()
@@ -76,15 +77,13 @@ async Task MapGitHubUserToChatUser(IArguments args) {
     await task;
 }
 
-async Task MapGitHubUserToChatUser(string githubUsername, IChatUser chatUser) {
-    try {
-        var user = await github.User.Get(githubUsername);
-        await Bot.Brain.WriteAsync(GetUserMapKey(chatUser), githubUsername);
-        await Bot.ReplyAsync($"Mapped {chatUser} to GitHub user {githubUsername}.");
+async Task MapGitHubUserToChatUser(string username, IChatUser chatUser) {
+    var gitHubUsername = await EnsureGitHubUsername(username);
+    if (gitHubUsername is null) {
+        await Bot.ReplyAsync($"GitHub tells me {username} does not exist.");
     }
-    catch (NotFoundException) {
-        await Bot.ReplyAsync($"GitHub tells me {githubUsername} does not exist.");
-    }
+    await Bot.Brain.WriteAsync(GetUserMapKey(chatUser), gitHubUsername);
+    await Bot.ReplyAsync($"Mapped {chatUser} to GitHub user {gitHubUsername}.");
 }
 
 async Task<string> GetGitHubUserNameForMention(IChatUser mentioned) {
@@ -148,7 +147,7 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
 async Task ReplyWithAssignedIssues(IArguments args) {
     var (prepositionArg, assigneeArg, forArg, repoArg) = args;
     // User can ask `@abbot github issues assigned to me` or `@abbot github issues assigned me` 
-    if (assigneeArg is IMissingArgument) {
+    if (prepositionArg is not {Value: "to"}) {
         // Move arguments up by one.
         repoArg = forArg;
         forArg = assigneeArg;
@@ -237,18 +236,22 @@ async Task ReplyWithIssueAsync(IArgument numArg, IArgument repository) {
     }
 }
 
-async Task ReplyWithBillingInfoAsync(IArgument userOrOrgArg) {
-    var userOrOrg = userOrOrgArg.Value;
-    if (userOrOrgArg is IMissingArgument) {
-        await Bot.ReplyAsync("Please specify an org or user to get billing info. `@abbot help github` for more information.");
+async Task ReplyWithBillingInfoAsync(IArguments args) {
+    var (forArg, ownerArg) = args;
+    if (ownerArg is IMissingArgument) {
+        ownerArg = forArg;
+    }
+    
+    if (ownerArg is IMissingArgument) {
+        await Bot.ReplyAsync("Please specify an owner (user or org) to get billing info for. Ex: `@abbot github billing {owner}`.");
         return;
     }
     
-    var isOrg = await IsOrgAsync(userOrOrg);
+    var isOrg = await IsOrgAsync(ownerArg.Value);
     
     var billingBaseApiUrl = github.BaseAddress
         + (isOrg ? "orgs" : "users")
-        + $"/{userOrOrg}/settings/billing/";
+        + $"/{ownerArg}/settings/billing/";
     
     var apiRequests = new Task<dynamic>[] {
         GetBillingInfoAsync(billingBaseApiUrl, "actions"),
@@ -261,7 +264,7 @@ async Task ReplyWithBillingInfoAsync(IArgument userOrOrgArg) {
     var packages = responses[1];
     var storage = responses[2];
     
-    await Bot.ReplyAsync($@"Billing Info for `{userOrOrg}`.
+    await Bot.ReplyAsync($@"Billing Info for `{ownerArg}`.
 GitHub Actions:
 ```
 Total Minutes Used: {actions.total_minutes_used}
@@ -409,6 +412,16 @@ async Task<string> GetAssigneeFromArgument(IArgument assigneeArg) {
     return assigneeArg switch {
         {Value: "me"} or {Value: "mi"} or {Value: "moi"} => await GetGitHubUserNameForMention(Bot.From),
         IMentionArgument mentioned => await GetGitHubUserNameForMention(mentioned.Mentioned),
-        _ => assigneeArg.Value
+        _ => await EnsureGitHubUsername(assigneeArg.Value)
     };
+}
+
+async Task<string> EnsureGitHubUsername(string username) {
+    try {
+        var user = await github.User.Get(username);
+        return user.Name;
+    }
+    catch (NotFoundException) {
+        return null;
+    }
 }
