@@ -5,6 +5,7 @@ Usage:
 `@abbot github default {owner}/{repo}` - sets the default repository for this skill for the current room.
 `@abbot github user {{mention}} is {{github-username}}` to map a chat user to their GitHub username.
 `@abbot github issue triage [{owner}/{repo}]` - Retrieves unassigned issues. Limited to 20.
+`@abbot github issue close #{number} [{owner}/{repo}]` - closes the specified issue.
 `@abbot github issue #{number} [{owner}/{repo}]` - retrieves the issue by the issue number. `{owner}/{repo}` is not needed if the default repo is set.
 `@abbot github issue assign #{number} to {assignee} [{owner}/{repo}]` - assigns {assignee} to the issue. {assignee} could be a chat user, a GitHub username without the `@` prefix, or "me".
 `@abbot github issues assigned to {assignee}` - Retrieves open issues assigned to {assignee}. {assignee} could be a chat user, a GitHub username without the `@` prefix, or "me". 
@@ -47,11 +48,17 @@ Task action = (cmd, arg) switch {
 };
 await action;
 
+if (!Bot.IsChat && !Bot.IsInteraction && !Bot.IsRequest) {
+    // This was called by a schedule. Yes, we should have a property for this.
+    await Bot.ReplyAsync("_Previous message brought to you by a scheduled `github` skill._");
+}
+
 async Task HandleIssueSubCommandAsync(IArguments arguments) {
     Task result = arguments switch {
         (IMissingArgument, _) => Bot.ReplyAsync("`@abbot help github` to learn how to use this skill."),
-        ({Value: "triage"}, _) => ReplyWithIssueTriageAsync(null),
+        ({Value: "triage"}, _) => ReplyWithIssueTriageAsync(arguments.Skip(1)),
         ({Value: "assign"}, _) => AssignIssueAndReplyAsync(arguments.Skip(1)),
+        ({Value: "close"}, _) => CloseIssueAndReplyAsync(arguments.Skip(1)),
         ({Value: "assigned"}, _) => ReplyWithAssignedIssues(arguments.Skip(1)),
         ({Value: "user"}, _) => MapGitHubUserToChatUser(arguments.Skip(1)),
         var (issueNumber, repo) => ReplyWithIssueAsync(issueNumber, repo)
@@ -93,8 +100,39 @@ string GetUserMapKey(IChatUser user) {
     return $"user:{user.Id}";
 }
 
+async Task CloseIssueAndReplyAsync(IArguments args) {
+    var (numArg, prepositionArg, repositoryArg) = args;
+    // We support @abbot github issue close #123 for aseriousbiz/blog or 
+    // @abbot github issue close #123 aseriousbiz/blog (without the preposition).
+    if (repositoryArg is IMissingArgument) {
+        repositoryArg = prepositionArg;
+    }
+    
+    var issueNumber = numArg.ToInt32();
+    if (issueNumber is null) {
+        await Bot.ReplyAsync("Please provide an issue number.");
+        return;
+    }
+    
+    var (owner, repo) = await GetRepoOrDefault(repositoryArg);
+
+    if (owner is null || repo is null) {
+        await Bot.ReplyAsync($"Please specify which repository this is for or set a default repository first. `@abbot help github` to learn more.");
+        return;
+    }
+    
+    var issue = await github.Issue.Get(owner, repo, issueNumber.Value);
+    if (issue is null) {
+        await Bot.ReplyAsync($"Could not find issue #{issueNumber} for {owner}/{repo} or I do not have access to it.");
+        return;
+    }
+    var update = issue.ToUpdate();
+    update.State = ItemState.Closed;
+    await github.Issue.Update(owner, repo, issueNumber.Value, update);
+    await Bot.ReplyAsync($"Closed issue #{issueNumber}.");
+}
+
 async Task AssignIssueAndReplyAsync(IArguments args) {
-    // Ignore the issue and assign arguments.
     var (numArg, prepositionArg, assigneeArg, repositoryArg) = args;
     // We support @abbot github issue assign #123 to haacked or 
     // @abbot github issue assign #123 haacked
@@ -128,7 +166,7 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
     
     var issue = await github.Issue.Get(owner, repo, issueNumber);
     if (issue is null) {
-        await Bot.ReplyAsync($"Could not find issue #{issueNumber} for {owner}/{repo}.");
+        await Bot.ReplyAsync($"Could not find issue #{issueNumber} for {owner}/{repo} or I do not have access to it.");
         return;
     }
     
@@ -190,8 +228,13 @@ async Task ReplyWithAssignedIssues(IArguments args) {
 }
 
 // Return all open and unassigend issues in the repository.
-async Task ReplyWithIssueTriageAsync(string repository) {
-    var (owner, repo) = ParseNameWithOwner(repository);
+async Task ReplyWithIssueTriageAsync(IArguments args) {
+    var (prepositionArg, repoArg) = args;
+    if (repoArg is IMissingArgument) {
+        repoArg = prepositionArg;
+    }
+    
+    var (owner, repo) = await GetRepoOrDefault(repoArg);
 
     if (repo is null || owner is null) {
         await Bot.ReplyAsync("Repository must set as default or supplied in the form `owner/name`. `@abbot help github` for more information.");
