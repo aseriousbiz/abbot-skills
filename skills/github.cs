@@ -67,8 +67,7 @@ async Task MapGitHubUserToChatUser(IArguments args) {
     }
     
     Task task = (user, mapping) switch {
-        (IMissingArgument, _) => Bot.ReplyAsync("Please supply both a GitHub username and a chat user"),
-        (_, IMissingArgument) => Bot.ReplyAsync("Please supply both a GitHub username and a chat user"),
+        (IMissingArgument, _) or (_, IMissingArgument) => Bot.ReplyAsync("Please supply both a GitHub username and a chat user"),
         (IMentionArgument, IMentionArgument) => Bot.ReplyAsync("You specified two chat users. One should be a GitHub username without the `@` sign."),
         (IMentionArgument mention, var githubUser) => MapGitHubUserToChatUser(githubUser.Value, mention.Mentioned),
         (var githubUser, IMentionArgument mention) => MapGitHubUserToChatUser(githubUser.Value, mention.Mentioned),
@@ -87,11 +86,7 @@ async Task MapGitHubUserToChatUser(string username, IChatUser chatUser) {
 }
 
 async Task<string> GetGitHubUserNameForMention(IChatUser mentioned) {
-    var username = await Bot.Brain.GetAsync(GetUserMapKey(mentioned));
-    if (username is null) {
-        await Bot.ReplyAsync($"I don't know the GitHub username for {mentioned}. `@abbot github user {{mention}} is {{github-username}}` to tell me.");
-    }
-    return username;
+    return await Bot.Brain.GetAsync(GetUserMapKey(mentioned));
 }
 
 string GetUserMapKey(IChatUser user) {
@@ -127,7 +122,7 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
     
     var assignee = await GetAssigneeFromArgument(assigneeArg);
     if (assignee is null) {
-        // GetGitHubUserNameForMention will have reported the problem.
+        await Bot.ReplyAsync(GetUserNotFoundMessage(assigneeArg));
         return;
     }
     
@@ -142,6 +137,12 @@ async Task AssignIssue(int issueNumber, IArgument assigneeArg, string owner, str
     update.AddAssignee(assignee);
     await github.Issue.Update(owner, repo, issueNumber, update);
     await Bot.ReplyAsync($"Assigned {issueNumber} to {assignee}.");
+}
+
+static string GetUserNotFoundMessage(IArgument userArg) {
+    return userArg is IMentionArgument mentioned
+        ? $"I don't know the GitHub username for {userArg}. `@abbot github user {{mention}} is {{github-username}}` to tell me."
+        : $"I could not find the GitHub user with the username `{userArg}. Either the user does not exist or the GitHub Token supplied to this skill does not have permissions for that user.";
 }
 
 async Task ReplyWithAssignedIssues(IArguments args) {
@@ -161,7 +162,7 @@ async Task ReplyWithAssignedIssues(IArguments args) {
     
     var assignee = await GetAssigneeFromArgument(assigneeArg);
     if (assignee is null) {
-        // GetGitHubUserNameForMention will have reported the problem.
+        await Bot.ReplyAsync(GetUserNotFoundMessage(assigneeArg));
         return;
     }
     
