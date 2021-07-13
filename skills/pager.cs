@@ -14,6 +14,8 @@ if (serviceApiKey is not {Length: > 0}) {
 
 // Set up pre-requisites.
 Task task = Bot.Arguments switch {
+    ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
+    ({Value: "me"}, IMissingArgument, IMissingArgument) => GetPagerDutyUser(Bot.From),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
     ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
@@ -176,18 +178,50 @@ async Task SetPagerDutyEmail(IArgument emailArg) {
         return;
     }
     await WritePagerDutyEmail(Bot.From, email);
+    await Bot.ReplyAsync($"Okay, I'll remember your PagerDuty email is {email}");
 }
 
-async Task<string> GetPagerDutyEmail(IChatUser user) {
-    var email = await Bot.Brain.GetAsAsync<string>($"{user.Id}|PagerDutyEmail");
-    return email ?? user.Email;
+async Task ForgetPagerDutyEmail() {
+    await WritePagerDutyEmail(Bot.From, null);
+    await Bot.ReplyAsync("Ok, I've forgotten your PagerDuty email");
+}
+
+Task<string> GetPagerDutyEmail(IChatUser user) {
+    return Bot.Brain.GetAsAsync<string>($"{user.Id}|PagerDutyEmail");
+}
+
+async Task<dynamic> GetPagerDutyUser(IChatUser user) {
+    var email = (await GetPagerDutyEmail(user)) ?? user.Email;
+    var (possessive, addressee) = user.Id.Equals(Bot.From.Id, StringComparison.Ordinal)
+        ? ("your", "you")
+        : ($"{user.Name}'s", user.Name);
+    
+    if (email is null) {
+        await Bot.ReplyAsync($"Sorry, I can't figure out {possessive} email address :( Can {addressee} tell me with `{Bot} pager me as you@yourdomain.com`?");
+        return null;
+    }
+    var encodedEmail = Uri.EscapeDataString(email);
+    await Bot.ReplyAsync($"/users?query={encodedEmail}");
+    dynamic response = await CallPagerDutyApiAsync($"/users?query={encodedEmail}");
+
+    var count = response?.users?.Count ?? 0;
+    if (count is 1) {
+        return response.users[0];
+    }
+    await Bot.ReplyAsync($"Sorry, I expected to get 1 user back for {email}, but got {count} :sweat:. If your PagerDuty email is not {email} use `{Bot} pager me as {{email}}`");
+    return null;
 }
 
 Task WritePagerDutyEmail(IChatUser user, string email) {
-    return Bot.Brain.WriteAsync($"{user.Id}|PagerDutyEmail", email);
+    var key = $"{user.Id}|PagerDutyEmail";
+    if (email is null) {
+        return Bot.Brain.DeleteAsync(key);
+    }
+    return Bot.Brain.WriteAsync(key, email);
 }
 
-Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null) {
+async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null) {
     var headers = new Headers {{ "Authorization", $"Token token={restApiKey}" }};
-    return Bot.Http.SendJsonAsync(new Uri($"https://api.pagerduty.com{path}"), method ?? HttpMethod.Get, null, headers);
+    var endpoint = new Uri($"https://api.pagerduty.com{path}");
+    return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
 }
