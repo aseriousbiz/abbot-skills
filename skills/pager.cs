@@ -1,4 +1,4 @@
-/* PagerDuty Skill for triggering pager duty incidents and responding to them. */
+//* PagerDuty Skill for triggering pager duty incidents and responding to them. */
 
 var restApiKey = await Bot.Secrets.GetAsync("pagerduty-api-key");
 if (restApiKey is not {Length: > 0}) {
@@ -12,9 +12,9 @@ if (serviceApiKey is not {Length: > 0}) {
     return;
 }
 
-// Set up pre-requisites.
 Task task = Bot.Arguments switch {
-    ({Value: "who's"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}) or ({Value: "who"}, {Value: "is"}, {Value: "on call"} or {Value: "on call?"}) => WhoIsOnCallAsync(),
+    ({Value: "who"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _) => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(3)),
+    ({Value: "who"}, {Value: "is"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _)  => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(4)),
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
@@ -28,6 +28,14 @@ Task task = Bot.Arguments switch {
 };
 
 await task;
+
+Task HandleWhoIsOnCallAsync(IArguments arguments) {
+    return arguments switch {
+        ({Value: "for"}, var scheduleArg) => WhoIsOnCallAsync(scheduleArg.Value),
+        (IMissingArgument, _) => WhoIsOnCallAsync(null),
+        _ => ReplyWithHelpAsync()
+    };
+}
 
 async Task<dynamic> GetCurrentOnCallUser(string scheduleId) {
     var now = DateTimeOffset.UtcNow;
@@ -46,13 +54,13 @@ async Task<dynamic> GetCurrentOnCallUser(string scheduleId) {
     return null;
 }
 
-async Task WhoIsOnCallAsync() {
-    var response = await CallPagerDutyApiAsync("/schedules");
-    if (response.schedules.Count is 0) {
+async Task WhoIsOnCallAsync(string scheduleName) {
+    var schedules = await GetSchedules(scheduleName);
+    if (schedules.Count is 0) {
         await Bot.ReplyAsync("No schedules found!");
         return;
     }
-
+    await Bot.ReplyAsync("I dunno.");
 }
 
 async Task AmIOnCallAsync() {
@@ -63,27 +71,27 @@ async Task AmIOnCallAsync() {
         await Bot.ReplyAsync($"Couldn't figure out the PagerDuty user connected to your account. `{Bot} {Bot.SkillName} me as youremail@yourdomain.com` to set your PagerDuty email.");
         return;
     }
-    var response = await CallPagerDutyApiAsync("/schedules");
-    if (response.schedules.Count is 0) {
+    var schedules = await GetSchedules();
+    if (schedules.Count is 0) {
         await Bot.ReplyAsync("No schedules found!");
         return;
     }
     
-    var schedules = new List<string>();
-    foreach (var schedule in response.schedules) {
+    var responses = new List<string>();
+    foreach (var schedule in schedules) {
         string scheduleId = schedule.id;
         var oncallUser = await GetCurrentOnCallUser(scheduleId);
         if (userId == oncallUser?.id) {
-            schedules.Add($"Yes, you are on call for {schedule.name} - {schedule.html_url}");
+            responses.Add($"Yes, you are on call for {schedule.name} - {schedule.html_url}");
         }
         else if (oncallUser?.name is null) {
-            schedules.Add($"No, you are NOT on call for {schedule.name} - {schedule.html_url}");
+            responses.Add($"No, you are NOT on call for {schedule.name} - {schedule.html_url}");
         }
         else {
-            schedules.Add($"No, you are NOT on call for {schedule.name} (but {oncallUser.name} is) - {schedule.html_url}");
+            responses.Add($"No, you are NOT on call for {schedule.name} (but {oncallUser.name} is) - {schedule.html_url}");
         }
     }
-    await Bot.ReplyAsync(schedules.ToMarkdownList());
+    await Bot.ReplyAsync(responses.ToMarkdownList());
 }
 
 // Perform the actual pagerduty actions
@@ -237,12 +245,12 @@ async Task SetPagerDutyEmail(IArgument emailArg) {
         return;
     }
     await WritePagerDutyEmail(Bot.From, email);
-    await Bot.ReplyAsync($"Okay, I'll remember your PagerDuty email is {email}");
+    await Bot.ReplyAsync($"Okay, I’ll remember your PagerDuty email is {email}");
 }
 
 async Task ForgetPagerDutyEmail() {
     await WritePagerDutyEmail(Bot.From, null);
-    await Bot.ReplyAsync("Ok, I've forgotten your PagerDuty email");
+    await Bot.ReplyAsync("Ok, I’ve forgotten your PagerDuty email");
 }
 
 Task<string> GetPagerDutyEmail(IChatUser user) {
@@ -253,8 +261,8 @@ async Task ReplyWithPagerUserInfo(IChatUser user) {
     var pagerUser = await GetPagerDutyUser(user);
     
     var emailNote = pagerUser switch {
-            {PagerDutyEmail: {Length: > 0}} => $"You've told me your PagerDuty email is {pagerUser.PagerDutyEmail}",
-            {DefaultEmail: {Length: > 0}} => $"I'm assuming your PagerDuty email is #{pagerUser.DefaultEmail}. Change it with `{Bot} {Bot.SkillName} me as you@yourdomain.com`",
+            {PagerDutyEmail: {Length: > 0}} => $"You’ve told me your PagerDuty email is {pagerUser.PagerDutyEmail}",
+            {DefaultEmail: {Length: > 0}} => $"I’m assuming your PagerDuty email is #{pagerUser.DefaultEmail}. Change it with `{Bot} {Bot.SkillName} me as you@yourdomain.com`",
             _ => $"I don't know your email. Either set it with `{Bot} my email is your@yourdomain.com` or set it specifically for this skill with `{Bot} {Bot.SkillName} me as you@yourdomain.com`"
     };
     
@@ -277,7 +285,7 @@ async Task<PagerDutyUser> GetPagerDutyUser(IChatUser user) {
         : ($"{user.Name}'s", user.Name);
     
     if (email is null) {
-        await Bot.ReplyAsync($"Sorry, I can't figure out {possessive} email address :( Can {addressee} tell me with `{Bot} pager me as you@yourdomain.com`?");
+        await Bot.ReplyAsync($"Sorry, I can’t figure out {possessive} email address :( Can {addressee} tell me with `{Bot} pager me as you@yourdomain.com`?");
         return pagerDutyUser;
     }
     var encodedEmail = Uri.EscapeDataString(email);
@@ -304,6 +312,14 @@ async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null)
     var headers = new Headers {{ "Authorization", $"Token token={restApiKey}" }};
     var endpoint = new Uri($"https://api.pagerduty.com{path}");
     return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
+}
+
+async Task<dynamic> GetSchedules(string scheduleName = null) {
+    var endpoint = scheduleName is not null
+            ? $"/schedules?query={Uri.EscapeDataString(scheduleName)}"
+            : $"/schedules";
+    var response = await CallPagerDutyApiAsync(endpoint);
+    return response?.schedules;
 }
 
 public class PagerDutyUser {
