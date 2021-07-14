@@ -14,8 +14,10 @@ if (serviceApiKey is not {Length: > 0}) {
 
 // Set up pre-requisites.
 Task task = Bot.Arguments switch {
+    ({Value: "who's"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}) or ({Value: "who"}, {Value: "is"}, {Value: "on call"} or {Value: "on call?"}) => WhoIsOnCallAsync(),
+    ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
-    ({Value: "me"}, IMissingArgument, IMissingArgument) => GetPagerDutyUser(Bot.From),
+    (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
     ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
@@ -26,6 +28,63 @@ Task task = Bot.Arguments switch {
 };
 
 await task;
+
+async Task<dynamic> GetCurrentOnCallUser(string scheduleId) {
+    var now = DateTimeOffset.UtcNow;
+    var oneHour = now.AddHours(1);
+    var endpoint = $"/schedules/{scheduleId}/users?since={now:o}&until={oneHour:o}";
+    try {
+        var response = await CallPagerDutyApiAsync(endpoint);
+        if (response?.users?.Count > 0) {
+            return response.users[0];
+        }
+    }
+    catch (HttpRequestException e) {
+        await Bot.ReplyAsync($"Error requesting {endpoint}\n" + e.Message);
+    }
+    
+    return null;
+}
+
+async Task WhoIsOnCallAsync() {
+    var response = await CallPagerDutyApiAsync("/schedules");
+    if (response.schedules.Count is 0) {
+        await Bot.ReplyAsync("No schedules found!");
+        return;
+    }
+
+}
+
+async Task AmIOnCallAsync() {
+    var user = await GetPagerDutyUser(Bot.From);
+    var userId = user.User?.id;
+    
+    if (userId is null) {
+        await Bot.ReplyAsync($"Couldn't figure out the PagerDuty user connected to your account. `{Bot} {Bot.SkillName} me as youremail@yourdomain.com` to set your PagerDuty email.");
+        return;
+    }
+    var response = await CallPagerDutyApiAsync("/schedules");
+    if (response.schedules.Count is 0) {
+        await Bot.ReplyAsync("No schedules found!");
+        return;
+    }
+    
+    var schedules = new List<string>();
+    foreach (var schedule in response.schedules) {
+        string scheduleId = schedule.id;
+        var oncallUser = await GetCurrentOnCallUser(scheduleId);
+        if (userId == oncallUser?.id) {
+            schedules.Add($"Yes, you are on call for {schedule.name} - {schedule.html_url}");
+        }
+        else if (oncallUser?.name is null) {
+            schedules.Add($"No, you are NOT on call for {schedule.name} - {schedule.html_url}");
+        }
+        else {
+            schedules.Add($"No, you are NOT on call for {schedule.name} (but {oncallUser.name} is) - {schedule.html_url}");
+        }
+    }
+    await Bot.ReplyAsync(schedules.ToMarkdownList());
+}
 
 // Perform the actual pagerduty actions
 async Task TriggerPagerDutyAsync(IArguments args) {
@@ -190,26 +249,47 @@ Task<string> GetPagerDutyEmail(IChatUser user) {
     return Bot.Brain.GetAsAsync<string>($"{user.Id}|PagerDutyEmail");
 }
 
-async Task<dynamic> GetPagerDutyUser(IChatUser user) {
-    var email = (await GetPagerDutyEmail(user)) ?? user.Email;
+async Task ReplyWithPagerUserInfo(IChatUser user) {
+    var pagerUser = await GetPagerDutyUser(user);
+    
+    var emailNote = pagerUser switch {
+            {PagerDutyEmail: {Length: > 0}} => $"You've told me your PagerDuty email is {pagerUser.PagerDutyEmail}",
+            {DefaultEmail: {Length: > 0}} => $"I'm assuming your PagerDuty email is #{pagerUser.DefaultEmail}. Change it with `{Bot} {Bot.SkillName} me as you@yourdomain.com`",
+            _ => $"I don't know your email. Either set it with `{Bot} my email is your@yourdomain.com` or set it specifically for this skill with `{Bot} {Bot.SkillName} me as you@yourdomain.com`"
+    };
+    
+    var response = pagerUser.User is not null
+        ? $"I found your PagerDuty user {pagerUser.User.html_url}, {emailNote}"
+        : $"I couldn't find your user :( {emailNote}";
+    
+    await Bot.ReplyAsync(response);
+}
+
+async Task<PagerDutyUser> GetPagerDutyUser(IChatUser user) {
+    var pagerDutyUser = new PagerDutyUser {
+        PagerDutyEmail = await GetPagerDutyEmail(user),
+        DefaultEmail = user.Email
+    };
+    var email = pagerDutyUser.PagerDutyEmail ?? pagerDutyUser.DefaultEmail;
+    
     var (possessive, addressee) = user.Id.Equals(Bot.From.Id, StringComparison.Ordinal)
         ? ("your", "you")
         : ($"{user.Name}'s", user.Name);
     
     if (email is null) {
         await Bot.ReplyAsync($"Sorry, I can't figure out {possessive} email address :( Can {addressee} tell me with `{Bot} pager me as you@yourdomain.com`?");
-        return null;
+        return pagerDutyUser;
     }
     var encodedEmail = Uri.EscapeDataString(email);
-    await Bot.ReplyAsync($"/users?query={encodedEmail}");
     dynamic response = await CallPagerDutyApiAsync($"/users?query={encodedEmail}");
 
     var count = response?.users?.Count ?? 0;
     if (count is 1) {
-        return response.users[0];
+        pagerDutyUser.User = response.users[0];
+        return pagerDutyUser;
     }
     await Bot.ReplyAsync($"Sorry, I expected to get 1 user back for {email}, but got {count} :sweat:. If your PagerDuty email is not {email} use `{Bot} pager me as {{email}}`");
-    return null;
+    return pagerDutyUser;
 }
 
 Task WritePagerDutyEmail(IChatUser user, string email) {
@@ -224,4 +304,10 @@ async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null)
     var headers = new Headers {{ "Authorization", $"Token token={restApiKey}" }};
     var endpoint = new Uri($"https://api.pagerduty.com{path}");
     return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
+}
+
+public class PagerDutyUser {
+    public string PagerDutyEmail { get; set; }
+    public string DefaultEmail { get; set; }
+    public dynamic User { get; set; }
 }
