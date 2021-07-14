@@ -13,17 +13,17 @@ if (serviceApiKey is not {Length: > 0}) {
 }
 
 Task task = Bot.Arguments switch {
-    ({Value: "who"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _) => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(3)),
-    ({Value: "who"}, {Value: "is"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _)  => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(4)),
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
+    ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
+    ({Value: "incident"}, IArgument id, _) => ReplyWithIncidentAsync(id),
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
-    ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
-    ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
-    ({Value: "incident"}, IArgument id, _) => ReplyWithIncidentAsync(id),
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
     ({Value: "sup"}, _, _) or ({Value: "inc"}, _, _) or ({Value: "incidents"}, _, _) or ({Value: "problems"}, _, _) => ReplyWithIncidentsAsync(),
+    ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
+    ({Value: "who's"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _) => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(3)),
+    ({Value: "who"}, {Value: "is"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _)  => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(4)),
     _ => ReplyWithHelpAsync()
 };
 
@@ -37,7 +37,7 @@ Task HandleWhoIsOnCallAsync(IArguments arguments) {
     };
 }
 
-async Task<dynamic> GetCurrentOnCallUser(string scheduleId) {
+async Task<dynamic> GetCurrentOnCallUser(dynamic scheduleId) {
     var now = DateTimeOffset.UtcNow;
     var oneHour = now.AddHours(1);
     var endpoint = $"/schedules/{scheduleId}/users?since={now:o}&until={oneHour:o}";
@@ -57,10 +57,25 @@ async Task<dynamic> GetCurrentOnCallUser(string scheduleId) {
 async Task WhoIsOnCallAsync(string scheduleName) {
     var schedules = await GetSchedules(scheduleName);
     if (schedules.Count is 0) {
-        await Bot.ReplyAsync("No schedules found!");
+        var message = scheduleName is {Length: > 0}
+            ? $"I could not find a schedule named `{scheduleName}`"
+            : "No schedules found!";
+        await Bot.ReplyAsync(message);
         return;
     }
-    await Bot.ReplyAsync("I dunno.");
+    var messages = new List<string>();
+    foreach (var schedule in schedules) {
+        var user = await GetCurrentOnCallUser(schedule.id);
+        if (user is not null) {
+            messages.Add($"{user.name} is on call for {schedule.name} - {schedule.html_url}");
+        }
+    }
+
+    if (messages.Count is 0) {
+        await Bot.ReplyAsync("No users are on call!");
+        return;
+    }
+    await Bot.ReplyAsync(messages.ToMarkdownList());
 }
 
 async Task AmIOnCallAsync() {
@@ -226,7 +241,7 @@ async Task ReplyWithIncidentNotesAsync(IArgument idArg) {
     var notes = new List<string>();
     var result = await CallPagerDutyApiAsync($"/incidents/{incidentNumber}/notes");
     foreach (var note in result.notes) {
-        notes.Add($"{note.created_at} #{note.user.summary}: #{note.content}");
+        notes.Add($"{note.created_at} {note.user.summary}: {note.content}");
     }
     var response = notes is {Count: 0}
         ? $"Incident {incidentNumber} does not have any notes."
@@ -262,7 +277,7 @@ async Task ReplyWithPagerUserInfo(IChatUser user) {
     
     var emailNote = pagerUser switch {
             {PagerDutyEmail: {Length: > 0}} => $"You’ve told me your PagerDuty email is {pagerUser.PagerDutyEmail}",
-            {DefaultEmail: {Length: > 0}} => $"I’m assuming your PagerDuty email is #{pagerUser.DefaultEmail}. Change it with `{Bot} {Bot.SkillName} me as you@yourdomain.com`",
+            {DefaultEmail: {Length: > 0}} => $"I’m assuming your PagerDuty email is {pagerUser.DefaultEmail}. Change it with `{Bot} {Bot.SkillName} me as you@yourdomain.com`",
             _ => $"I don't know your email. Either set it with `{Bot} my email is your@yourdomain.com` or set it specifically for this skill with `{Bot} {Bot.SkillName} me as you@yourdomain.com`"
     };
     
