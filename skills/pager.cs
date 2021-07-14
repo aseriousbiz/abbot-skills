@@ -1,4 +1,12 @@
-//* PagerDuty Skill for triggering pager duty incidents and responding to them. */
+/* 
+PagerDuty Skill for triggering pager duty incidents and responding to them.
+
+TODO:
+- [ ] Implement ability to restrict skill to a set list of schedules (need to understand how and why that's used).
+- [ ] Implement ability to restrict skill to a set list of PagerDuty services (need to understand how and why that's used).
+
+For example, do people want to restrict schedules/services per chat room?
+*/
 
 var restApiKey = await Bot.Secrets.GetAsync("pagerduty-api-key");
 if (restApiKey is not {Length: > 0}) {
