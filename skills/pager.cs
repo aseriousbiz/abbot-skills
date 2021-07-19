@@ -28,6 +28,7 @@ Task task = Bot.Arguments switch {
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
+    ({Value: "services"}, IMissingArgument, IMissingArgument) => ListServicesAsync(),
     ({Value: "sup"}, _, _) or ({Value: "inc"}, _, _) or ({Value: "incidents"}, _, _) or ({Value: "problems"}, _, _) => ReplyWithIncidentsAsync(),
     ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
     ({Value: "who's"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _) => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(3)),
@@ -36,6 +37,30 @@ Task task = Bot.Arguments switch {
 };
 
 await task;
+
+// Perform the actual pagerduty actions
+async Task TriggerPagerDutyAsync(IArguments args) {
+    var botUserEmail = await EnsureBotUserEmailSetAsync();
+    if (botUserEmail is null) {
+        return; // The EnsureBotUser email will have replied with an appropriate message.
+    }
+
+    Task action = args switch {
+        (IMentionArgument mention, var msg) => PageUserAsync(mention.Mentioned, msg.Value),
+        _ => Bot.ReplyAsync("???")
+    };
+
+    await action;
+}
+
+async Task PageUserAsync(IChatUser chatUser, string message) {
+    var pagerUser = await GetPagerDutyUser(chatUser);
+    if (pagerUser is null) {
+        await Bot.ReplyAsync($"I do not know the pager duty user associated to {chatUser}. Have them set it via `{Bot} {Bot.SkillName} me as {{PagerDutyEmail}}`");
+        return;
+    }
+    await Bot.ReplyAsync($"Paging {pagerUser.DefaultEmail}...");
+}
 
 Task HandleWhoIsOnCallAsync(IArguments arguments) {
     return arguments switch {
@@ -115,15 +140,6 @@ async Task AmIOnCallAsync() {
         }
     }
     await Bot.ReplyAsync(responses.ToMarkdownList());
-}
-
-// Perform the actual pagerduty actions
-async Task TriggerPagerDutyAsync(IArguments args) {
-    var botUserEmail = await EnsureBotUserEmailSetAsync();
-    if (botUserEmail is null) {
-        return; // The EnsureBotUser email will have replied with an appropriate message.
-    }
-    await Bot.ReplyAsync("Ring ring!");
 }
 
 async Task SetPagerDutyBotConfigAsync(IArguments arguments) {
@@ -337,16 +353,79 @@ async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null)
     return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
 }
 
-async Task<dynamic> GetSchedules(string scheduleName = null) {
+async Task<dynamic> CreateIncidentAsync(string path, IChatUser caller) {
+    var pagerDutyUser = await GetPagerDutyUser(caller);
+    if (pagerDutyUser is null) {
+        return null;
+    }
+    var headers = new Headers {
+        { "Authorization", $"Token token={restApiKey}" },
+        { "From", pagerDutyUser.PagerDutyEmail }
+    };
+    var endpoint = new Uri($"https://api.pagerduty.com/incidents");
+    return await Bot.Http.SendJsonAsync(endpoint, HttpMethod.Post, null, headers);
+}
+
+async Task<List<dynamic>> GetSchedules(string scheduleName = null) {
     var endpoint = scheduleName is not null
             ? $"/schedules?query={Uri.EscapeDataString(scheduleName)}"
             : $"/schedules";
     var response = await CallPagerDutyApiAsync(endpoint);
-    return response?.schedules;
+    return response?.schedules?.ToObject<List<dynamic>>();
+}
+
+async Task ListServicesAsync() {
+    dynamic response = await CallPagerDutyApiAsync("/services");
+    List<dynamic> services = response?.services?.ToObject<List<dynamic>>();
+    if (services is null) {
+        await Bot.ReplyAsync("Something went wrong calling the PagerDuty API.");
+        return;
+    }
+    if (services.Count is 0) {
+        await Bot.ReplyAsync("No services found!");
+        return;
+    }
+    var replies = services.Select(service => $"{service.id}: {service.name} ({service.status}) - {service.html_url}").ToMarkdownList();
+    await Bot.ReplyAsync(replies);
+}
+
+async Task<dynamic> GetEscalationPolicyAsync(string query) {
+    dynamic response = await CallPagerDutyApiAsync($"/escalation_policies?query={Uri.EscapeDataString(query)}");
+    List<dynamic> policies = response?.policies?.ToObject<List<dynamic>>();
+    if (policies is null) {
+        return null;
+    }
+    
+    if (policies.Count is 1) {
+        return policies[0];
+    }
+
+    // Try exact match, but only when there is a single exact match.
+    var exactMatch = policies.Select(p => query.Equals(p.name, StringComparison.OrdinalIgnoreCase)).SingleOrDefault();
+    if (exactMatch is not null) {
+        return exactMatch;
+    }
+    
+    return null;
 }
 
 public class PagerDutyUser {
     public string PagerDutyEmail { get; set; }
     public string DefaultEmail { get; set; }
     public dynamic User { get; set; }
+}
+
+public class PagerDutyIncidentBody {
+    public PagerDutyIncident incident {get; set;}
+}
+
+public class PagerDutyIncident {
+    public string type => "incident";
+    public string title { get; set; }
+    public string urgency => "high";
+}
+
+public class PagerDutyService {
+    public string id {get; set;}
+    public string type => "service_reference";
 }
