@@ -30,7 +30,7 @@ Task task = Bot.Arguments switch {
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
     ({Value: "services"}, IMissingArgument, IMissingArgument) => ListServicesAsync(),
     ({Value: "sup"}, _, _) or ({Value: "inc"}, _, _) or ({Value: "incidents"}, _, _) or ({Value: "problems"}, _, _) => ReplyWithIncidentsAsync(),
-    ({Value: "trigger"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
+    ({Value: "trigger"} or {Value: "page"}, _, _) => TriggerPagerDutyAsync(Bot.Arguments.Skip(1)), // Skip the "trigger" arg and pass the rest.
     ({Value: "who's"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _) => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(3)),
     ({Value: "who"}, {Value: "is"}, {Value: "on"}, {Value: "call"} or {Value: "call?"}, _)  => HandleWhoIsOnCallAsync(Bot.Arguments.Skip(4)),
     _ => ReplyWithHelpAsync()
@@ -47,6 +47,7 @@ async Task TriggerPagerDutyAsync(IArguments args) {
 
     Task action = args switch {
         (IMentionArgument mention, var msg) => PageUserAsync(mention.Mentioned, msg.Value),
+        (IArgument target, var msg) => PageTargetAsync(target.Value, msg.Value),
         _ => Bot.ReplyAsync("???")
     };
 
@@ -55,11 +56,36 @@ async Task TriggerPagerDutyAsync(IArguments args) {
 
 async Task PageUserAsync(IChatUser chatUser, string message) {
     var pagerUser = await GetPagerDutyUser(chatUser);
-    if (pagerUser is null) {
-        await Bot.ReplyAsync($"I do not know the pager duty user associated to {chatUser}. Have them set it via `{Bot} {Bot.SkillName} me as {{PagerDutyEmail}}`");
+    if (pagerUser?.User is null) {
         return;
     }
-    await Bot.ReplyAsync($"Paging {pagerUser.DefaultEmail}...");
+    var response = await CreateIncidentAsync(serviceApiKey, message, chatUser);
+    var incident = response?.incident;
+    if (incident is null) {
+        await Bot.ReplyAsync("Something went wrong trying to create the incident.");
+        return;
+    }
+    await Bot.ReplyAsync($":pager: triggered! Incident #{incident.incident_number} assigned to {chatUser}");
+}
+
+async Task PageTargetAsync(string target, string message) {
+    var policy = await GetEscalationPolicyAsync(target);
+    if (policy is not null) {
+        // Page the policy.
+        return;
+    }
+    var schedules = await GetSchedules(target);
+    if (schedules is {Count: > 0}) {
+        var schedule = schedules.First();
+        var oncall = await GetCurrentOnCallUser(schedule.id);
+        if (oncall is null) {
+            await Bot.ReplyAsync($"I do not know the on call user for the schedule `{target}`");
+            return;
+        }
+        return;
+    }
+
+    await Bot.ReplyAsync($"Paging ...");
 }
 
 Task HandleWhoIsOnCallAsync(IArguments arguments) {
@@ -279,12 +305,13 @@ async Task SetPagerDutyEmail(IArgument emailArg) {
         return;
     }
     var email = emailArg.Value;
-    if (!email.Contains('@')) {
+    await Bot.ReplyAsync($"`{emailArg.Value}`");
+/*    if (!email.Contains('@')) {
         await Bot.ReplyAsync("Please specify a valid email address for your pager email.");
         return;
     }
     await WritePagerDutyEmail(Bot.From, email);
-    await Bot.ReplyAsync($"Okay, I’ll remember your PagerDuty email is {email}");
+    await Bot.ReplyAsync($"Okay, I’ll remember your PagerDuty email is {email}");*/
 }
 
 async Task ForgetPagerDutyEmail() {
@@ -353,8 +380,8 @@ async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null)
     return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
 }
 
-async Task<dynamic> CreateIncidentAsync(string path, IChatUser caller) {
-    var pagerDutyUser = await GetPagerDutyUser(caller);
+async Task<dynamic> CreateIncidentAsync(string serviceId, string message, IChatUser assignee = null, dynamic escalationPolicy = null) {
+    var pagerDutyUser = await GetPagerDutyUser(Bot.From);
     if (pagerDutyUser is null) {
         return null;
     }
@@ -362,8 +389,34 @@ async Task<dynamic> CreateIncidentAsync(string path, IChatUser caller) {
         { "Authorization", $"Token token={restApiKey}" },
         { "From", pagerDutyUser.PagerDutyEmail }
     };
+
     var endpoint = new Uri($"https://api.pagerduty.com/incidents");
-    return await Bot.Http.SendJsonAsync(endpoint, HttpMethod.Post, null, headers);
+    var incident = new PagerDutyIncident {
+        service = new PagerDutyService { id = serviceId },
+        title = message
+    };
+    if (assignee is not null) {
+        var asigneeUser = await GetPagerDutyUser(assignee);
+        if (asigneeUser?.User is null) {
+            return null;
+        }
+        incident.assignments = new[] {
+            new {
+                assignee = new {
+                    asigneeUser.User.id,
+                    type = "user_reference"
+                }
+            }
+        };
+    }
+    else if (escalationPolicy is not null) {
+        incident.escalation_policy = new {
+            escalationPolicy.id,
+            type = "escalation_policy_reference"
+        };
+    }
+    var data = new { incident };
+    return await Bot.Http.SendJsonAsync(endpoint, HttpMethod.Post, data, headers);
 }
 
 async Task<List<dynamic>> GetSchedules(string scheduleName = null) {
@@ -415,14 +468,12 @@ public class PagerDutyUser {
     public dynamic User { get; set; }
 }
 
-public class PagerDutyIncidentBody {
-    public PagerDutyIncident incident {get; set;}
-}
-
 public class PagerDutyIncident {
     public string type => "incident";
     public string title { get; set; }
-    public string urgency => "high";
+    public PagerDutyService service { get; set; }
+    public object assignments {get; set;}
+    public object escalation_policy {get; set;}
 }
 
 public class PagerDutyService {
