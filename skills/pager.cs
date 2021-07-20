@@ -21,9 +21,12 @@ if (serviceApiKey is not {Length: > 0}) {
 }
 
 Task task = Bot.Arguments switch {
-    ({Value: "ack!"} or {Value: "acknowledge!"}, IMissingArgument, _) => AcknowledgeAllIncidentsAsync(),
-    ({Value: "ack"} or {Value: "acknowledge"}, IMissingArgument, _) => AcknowledgeAssignedIncidentsAsync(), // Skip the "ack" arg and pass the rest.
-    ({Value: "ack"} or {Value: "acknowledge"}, _, _) => AcknowledgeIncidentsAsync(Bot.Arguments.Skip(1)), // Skip the "ack" arg and pass the rest.
+    ({Value: "ack!"} or {Value: "acknowledge!"}, IMissingArgument, _) => UpdateAllIncidentsAsync(IncidentStatus.Acknowledged),
+    ({Value: "ack"} or {Value: "acknowledge"}, IMissingArgument, _) => UpdateAssignedIncidentsAsync(IncidentStatus.Acknowledged),
+    ({Value: "ack"} or {Value: "acknowledge"}, _, _) => UpdateIncidentsAsync(Bot.Arguments.Skip(1), IncidentStatus.Acknowledged), // Skip the "ack" arg and pass the rest.
+    ({Value: "res!"} or {Value: "resolve!"}, IMissingArgument, _) => UpdateAllIncidentsAsync(IncidentStatus.Resolved),
+    ({Value: "res"} or {Value: "resolve"}, IMissingArgument, _) => UpdateAssignedIncidentsAsync(IncidentStatus.Resolved),
+    ({Value: "res"} or {Value: "resolve"}, _, _) => UpdateIncidentsAsync(Bot.Arguments.Skip(1), IncidentStatus.Resolved), // Skip the "res" arg and pass the rest.
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
     ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
@@ -91,13 +94,13 @@ async Task PageTargetAsync(string target, string message) {
     await Bot.ReplyAsync($"Paging ...");
 }
 
-async Task AcknowledgeAllIncidentsAsync() {
+async Task UpdateAllIncidentsAsync(IncidentStatus updatedStatus) {
     var pagerDutyUser = await GetPagerDutyUser(Bot.From);
     if (pagerDutyUser?.PagerDutyEmail is null) {
         return;
     }
     
-    var assigned = await GetIncidentsAsync(IncidentStatus.Triggered, IncidentStatus.Acknowledged);
+    var assigned = await GetIncidentsAsync(IncidentStatus.Triggered, updatedStatus);
     if (assigned is {Count: 0}) {
         await Bot.ReplyAsync("No incidents to acknowledge.");
         return;
@@ -106,7 +109,7 @@ async Task AcknowledgeAllIncidentsAsync() {
     await UpdateIncidentsAsync(assigned, IncidentStatus.Acknowledged, pagerDutyUser);
 }
 
-async Task AcknowledgeAssignedIncidentsAsync() {
+async Task UpdateAssignedIncidentsAsync(IncidentStatus updatedStatus) {
     var pagerDutyUser = await GetPagerDutyUser(Bot.From);
     if (pagerDutyUser?.PagerDutyEmail is null) {
         return;
@@ -118,10 +121,10 @@ async Task AcknowledgeAssignedIncidentsAsync() {
         return;
     }
     
-    await UpdateIncidentsAsync(assigned, IncidentStatus.Acknowledged, pagerDutyUser);
+    await UpdateIncidentsAsync(assigned, updatedStatus, pagerDutyUser);
 }
 
-async Task AcknowledgeIncidentsAsync(IArguments arguments) {
+async Task UpdateIncidentsAsync(IArguments arguments, IncidentStatus status) {
     var incidentNumbers = arguments.Select(arg => arg.ToInt32()).ToList();
     if (incidentNumbers.Any(n => n is null)) {
         await Bot.ReplyAsync("Some of those incident numbers don't seem to be incident numbers");
@@ -130,7 +133,7 @@ async Task AcknowledgeIncidentsAsync(IArguments arguments) {
     
     // The reason "Acknowledged" are included in the status filter is to allow a different user 
     // to take ownership of an acknowledged incident by using the "ack" sub-command.
-    await UpdateIncidentsByNumbersAsync(incidentNumbers.Select(num => num.Value), new[] {IncidentStatus.Triggered, IncidentStatus.Acknowledged }, IncidentStatus.Acknowledged);
+    await UpdateIncidentsByNumbersAsync(incidentNumbers.Select(num => num.Value), new[] {IncidentStatus.Triggered, IncidentStatus.Acknowledged }, status);
 }
 
 // Update the specified incidents
@@ -359,9 +362,10 @@ async Task<List<dynamic>> GetAssignedIncidentsAsync(PagerDutyUser pagerDutyUser)
 
 string FormatIncident(dynamic incident) {
     var summary = incident.title;
-    var assignee = incident.assignments?[0]?.assignee?.summary;
-    string assignedTo = assignee is not null
-        ? $"- assigned to {assignee}"
+    List<dynamic> assignments = incident.assignments?.ToObject<List<dynamic>>();
+    var assignees = assignments?.Select(a => a?.assignee?.summary);
+    string assignedTo = assignees is not null
+        ? $"- assigned to {string.Join(", ", assignees)}"
         : string.Empty;
     return $"{incident.incident_number}: {incident.created_at} {summary} {assignedTo}";
 }
@@ -568,6 +572,17 @@ public class PagerDutyIncident {
     public PagerDutyService service { get; set; }
     public object assignments {get; set;}
     public object escalation_policy {get; set;}
+}
+
+public class PagerDutyService {
+    public string id {get; set;}
+    public string type => "service_reference";
+}
+
+public enum IncidentStatus {
+    Acknowledged,
+    Triggered,
+    Resolved
 }
 
 public class PagerDutyService {
