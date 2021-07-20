@@ -21,6 +21,7 @@ if (serviceApiKey is not {Length: > 0}) {
 }
 
 Task task = Bot.Arguments switch {
+    ({Value: "ack"} or {Value: "acknowledge"}, _, _) => AcknowledgeIncidentAsync(Bot.Arguments.Skip(1)), // Skip the "ack" arg and pass the rest.
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
     ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
@@ -86,6 +87,20 @@ async Task PageTargetAsync(string target, string message) {
     }
 
     await Bot.ReplyAsync($"Paging ...");
+}
+
+async Task AcknowledgeIncidentAsync(IArguments arguments) {
+    var incidentNumbers = arguments.Select(arg => arg.ToInt32()).ToList();
+    if (incidentNumbers.Any(n => n is null)) {
+        await Bot.ReplyAsync("Some of those incident numbers don't seem to be incident numbers");
+        return;
+    }
+    await UpdateIncidents(incidentNumbers.Select(num => num.Value), "triggered,acknowledged", "acknowledged");
+}
+
+async Task UpdateIncidents(IEnumerable<int> incidents, string statusFilter, string updatedStatus) {
+    var pagerDutyUser = await GetPagerDutyUser(Bot.From);
+    
 }
 
 Task HandleWhoIsOnCallAsync(IArguments arguments) {
@@ -248,17 +263,22 @@ async Task ReplyWithIncidentAsync(IArgument idArg) {
 }
 
 async Task ReplyWithIncidentsAsync() {
-    var result = await CallPagerDutyApiAsync("/incidents?sort_by=incident_number:asc");
-    var triggered = new List<string>();
-    var acknowledged = new List<string>();
-    foreach(dynamic incident in result.incidents) {
-        var listToAdd = incident.status == "triggered" ? triggered : acknowledged;
-        listToAdd.Add(FormatIncident(incident));
-    }
-    var response = triggered is {Count: 0} && acknowledged is {Count: 0}
+    var incidents = await GetIncidentsAsync(IncidentStatus.Triggered, IncidentStatus.Acknowledged);
+    
+    var triggered = incidents.Where(i => i.status == "triggered").Select(i => FormatIncident(i)).Cast<string>();
+    var acknowledged = incidents.Where(i => i.status == "acknowledged").Select(i => FormatIncident(i)).Cast<string>();
+    
+    var response = incidents is {Count: 0}
         ? "No open incidents"
         : $"Triggered:\n----------\n{triggered.ToMarkdownList()}\nAcknowledged:\n-------------\n{acknowledged.ToMarkdownList()}";
     await Bot.ReplyAsync(response);
+}
+
+async Task<List<dynamic>> GetIncidentsAsync(params IncidentStatus[] statuses) {
+    var endpoint = "/incidents?sort_by=incident_number:asc"
+        + statuses.Aggregate(string.Empty, (accumulate, status) => $"&statuses[]={status.ToString().ToLowerInvariant()}{accumulate}");
+    var result = await CallPagerDutyApiAsync(endpoint);
+    return result.incidents.ToObject<List<dynamic>>();
 }
 
 string FormatIncident(dynamic incident) {
@@ -305,13 +325,12 @@ async Task SetPagerDutyEmail(IArgument emailArg) {
         return;
     }
     var email = emailArg.Value;
-    await Bot.ReplyAsync($"`{emailArg.Value}`");
-/*    if (!email.Contains('@')) {
+    if (!email.Contains('@')) {
         await Bot.ReplyAsync("Please specify a valid email address for your pager email.");
         return;
     }
     await WritePagerDutyEmail(Bot.From, email);
-    await Bot.ReplyAsync($"Okay, I’ll remember your PagerDuty email is {email}");*/
+    await Bot.ReplyAsync($"Okay, I’ll remember your PagerDuty email is {email}");
 }
 
 async Task ForgetPagerDutyEmail() {
@@ -479,4 +498,9 @@ public class PagerDutyIncident {
 public class PagerDutyService {
     public string id {get; set;}
     public string type => "service_reference";
+}
+
+public enum IncidentStatus {
+    Acknowledged,
+    Triggered
 }
