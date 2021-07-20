@@ -21,7 +21,9 @@ if (serviceApiKey is not {Length: > 0}) {
 }
 
 Task task = Bot.Arguments switch {
-    ({Value: "ack"} or {Value: "acknowledge"}, _, _) => AcknowledgeIncidentAsync(Bot.Arguments.Skip(1)), // Skip the "ack" arg and pass the rest.
+    ({Value: "ack!"} or {Value: "acknowledge!"}, IMissingArgument, _) => AcknowledgeAllIncidentsAsync(),
+    ({Value: "ack"} or {Value: "acknowledge"}, IMissingArgument, _) => AcknowledgeAssignedIncidentsAsync(), // Skip the "ack" arg and pass the rest.
+    ({Value: "ack"} or {Value: "acknowledge"}, _, _) => AcknowledgeIncidentsAsync(Bot.Arguments.Skip(1)), // Skip the "ack" arg and pass the rest.
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
     ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
@@ -89,18 +91,85 @@ async Task PageTargetAsync(string target, string message) {
     await Bot.ReplyAsync($"Paging ...");
 }
 
-async Task AcknowledgeIncidentAsync(IArguments arguments) {
+async Task AcknowledgeAllIncidentsAsync() {
+    var pagerDutyUser = await GetPagerDutyUser(Bot.From);
+    if (pagerDutyUser?.PagerDutyEmail is null) {
+        return;
+    }
+    
+    var assigned = await GetIncidentsAsync(IncidentStatus.Triggered, IncidentStatus.Acknowledged);
+    if (assigned is {Count: 0}) {
+        await Bot.ReplyAsync("No incidents to acknowledge.");
+        return;
+    }
+    
+    await UpdateIncidentsAsync(assigned, IncidentStatus.Acknowledged, pagerDutyUser);
+}
+
+async Task AcknowledgeAssignedIncidentsAsync() {
+    var pagerDutyUser = await GetPagerDutyUser(Bot.From);
+    if (pagerDutyUser?.PagerDutyEmail is null) {
+        return;
+    }
+    
+    var assigned = await GetAssignedIncidentsAsync(pagerDutyUser);
+    if (assigned is {Count: 0}) {
+        await Bot.ReplyAsync("No incidents assigned to you.");
+        return;
+    }
+    
+    await UpdateIncidentsAsync(assigned, IncidentStatus.Acknowledged, pagerDutyUser);
+}
+
+async Task AcknowledgeIncidentsAsync(IArguments arguments) {
     var incidentNumbers = arguments.Select(arg => arg.ToInt32()).ToList();
     if (incidentNumbers.Any(n => n is null)) {
         await Bot.ReplyAsync("Some of those incident numbers don't seem to be incident numbers");
         return;
     }
-    await UpdateIncidents(incidentNumbers.Select(num => num.Value), "triggered,acknowledged", "acknowledged");
+    
+    // The reason "Acknowledged" are included in the status filter is to allow a different user 
+    // to take ownership of an acknowledged incident by using the "ack" sub-command.
+    await UpdateIncidentsByNumbersAsync(incidentNumbers.Select(num => num.Value), new[] {IncidentStatus.Triggered, IncidentStatus.Acknowledged }, IncidentStatus.Acknowledged);
 }
 
-async Task UpdateIncidents(IEnumerable<int> incidents, string statusFilter, string updatedStatus) {
+// Update the specified incidents
+async Task UpdateIncidentsByNumbersAsync(IEnumerable<int> incidentNumbers, IEnumerable<IncidentStatus> statuses, IncidentStatus updatedStatus) {
     var pagerDutyUser = await GetPagerDutyUser(Bot.From);
+    if (pagerDutyUser?.User is null) {
+        return;
+    }
+    var ids = incidentNumbers.ToList();
+    var incidents = await GetIncidentsAsync(statuses.ToArray());
+    var foundIncidents = incidents.Where(i => ids.Contains((int)i.incident_number)).ToList();
+    var incidentNumbersText = string.Join(", ", incidentNumbers);
+    if (foundIncidents is {Count: 0}) {
+        await Bot.ReplyAsync($"Couldn't find incident(s) {incidentNumbersText}. Use `{Bot} pager incidents` for listing.");
+        return;
+    }
     
+    await UpdateIncidentsAsync(foundIncidents, updatedStatus, pagerDutyUser);
+}
+
+async Task UpdateIncidentsAsync(IEnumerable<dynamic> incidents, IncidentStatus updatedStatus, PagerDutyUser pagerDutyUser) {
+    var data = new {
+        incidents = incidents.Select(i => new {
+            id = i.id,
+            type = "incident_reference",
+            status = updatedStatus.ToString().ToLowerInvariant()
+        })
+    };
+    var incidentNumbers = string.Join(", ", incidents.Select(i => i.incident_number));
+    var response = await CallPagerDutyApiAsync("/incidents", HttpMethod.Put, pagerDutyUser, data);
+    List<dynamic> updatedIncidents = response?.incidents?.ToObject<List<dynamic>>();
+    if (updatedIncidents is null) {
+        await Bot.ReplyAsync($"Problem updating incidents {incidentNumbers}");
+        return;
+    }
+    
+    var updatedIncidentNumbers = string.Join(", ", updatedIncidents.Select(i => i.incident_number));
+    var pluralSuffix = updatedIncidents.Count > 1 ? "s" : string.Empty;
+    await Bot.ReplyAsync($"Incident{pluralSuffix} {updatedIncidentNumbers} {updatedStatus.ToString().ToLowerInvariant()}");
 }
 
 Task HandleWhoIsOnCallAsync(IArguments arguments) {
@@ -281,6 +350,13 @@ async Task<List<dynamic>> GetIncidentsAsync(params IncidentStatus[] statuses) {
     return result.incidents.ToObject<List<dynamic>>();
 }
 
+async Task<List<dynamic>> GetAssignedIncidentsAsync(PagerDutyUser pagerDutyUser) {
+    // When user_ids[] are specified, only triggered and acknowledged are returned because resolved are not assigned to anyone.
+    var endpoint = $"/incidents?sort_by=incident_number:asc&user_ids[]={pagerDutyUser.User.id}";
+    var result = await CallPagerDutyApiAsync(endpoint);
+    return result.incidents.ToObject<List<dynamic>>();
+}
+
 string FormatIncident(dynamic incident) {
     var summary = incident.title;
     var assignee = incident.assignments?[0]?.assignee?.summary;
@@ -393,10 +469,15 @@ Task WritePagerDutyEmail(IChatUser user, string email) {
     return Bot.Brain.WriteAsync(key, email);
 }
 
-async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null) {
-    var headers = new Headers {{ "Authorization", $"Token token={restApiKey}" }};
+async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null, PagerDutyUser fromUser = null, object data = null) {
+    var headers = new Headers {
+        { "Authorization", $"Token token={restApiKey}" }
+    };
+    if (fromUser?.PagerDutyEmail is not null) {
+        headers["From"] = fromUser.PagerDutyEmail;
+    }
     var endpoint = new Uri($"https://api.pagerduty.com{path}");
-    return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, null, headers);
+    return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, data, headers);
 }
 
 async Task<dynamic> CreateIncidentAsync(string serviceId, string message, IChatUser assignee = null, dynamic escalationPolicy = null) {
@@ -404,12 +485,6 @@ async Task<dynamic> CreateIncidentAsync(string serviceId, string message, IChatU
     if (pagerDutyUser is null) {
         return null;
     }
-    var headers = new Headers {
-        { "Authorization", $"Token token={restApiKey}" },
-        { "From", pagerDutyUser.PagerDutyEmail }
-    };
-
-    var endpoint = new Uri($"https://api.pagerduty.com/incidents");
     var incident = new PagerDutyIncident {
         service = new PagerDutyService { id = serviceId },
         title = message
@@ -435,7 +510,7 @@ async Task<dynamic> CreateIncidentAsync(string serviceId, string message, IChatU
         };
     }
     var data = new { incident };
-    return await Bot.Http.SendJsonAsync(endpoint, HttpMethod.Post, data, headers);
+    return await CallPagerDutyApiAsync("/incidents", HttpMethod.Post, pagerDutyUser, data);
 }
 
 async Task<List<dynamic>> GetSchedules(string scheduleName = null) {
