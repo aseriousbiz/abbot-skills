@@ -17,7 +17,6 @@ Task task = Bot.Arguments switch {
     ({Value: "res"} or {Value: "resolve"}, IMissingArgument, _) => UpdateAssignedIncidentsAsync(IncidentStatus.Resolved),
     ({Value: "res"} or {Value: "resolve"}, _, _) => UpdateIncidentsAsync(Bot.Arguments.Skip(1), IncidentStatus.Resolved), // Skip the "res" arg and pass the rest.
     ({Value: "am"}, {Value: "I"} or {Value: "i"}, {Value: "on call"} or {Value: "on call?"}) => AmIOnCallAsync(),
-    ({Value: "bot"}, _) => SetPagerDutyBotConfigAsync(Bot.Arguments.Skip(1)),
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
     ({Value: "incident"}, IArgument id, _) => ReplyWithIncidentAsync(id),
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
@@ -40,15 +39,10 @@ await task;
 
 // Perform the actual pagerduty actions
 async Task TriggerPagerDutyAsync(IArguments args) {
-    var botUserEmail = await EnsureBotUserEmailSetAsync();
-    if (botUserEmail is null) {
-        return; // The EnsureBotUser email will have replied with an appropriate message.
-    }
-
     Task action = args switch {
         (IMentionArgument mention, var msg) => PageUserAsync(mention.Mentioned, msg.Value),
         (IArgument target, var msg) => PageTargetAsync(target.Value, msg.Value),
-        _ => Bot.ReplyAsync("???")
+        _ => ReplyWithHelpAsync()
     };
 
     await action;
