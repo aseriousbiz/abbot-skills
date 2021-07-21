@@ -1,23 +1,11 @@
-/* 
+/*
 PagerDuty Skill for triggering pager duty incidents and responding to them.
-
-TODO:
-- [ ] Implement ability to restrict skill to a set list of schedules (need to understand how and why that's used).
-- [ ] Implement ability to restrict skill to a set list of PagerDuty services (need to understand how and why that's used).
-
-For example, do people want to restrict schedules/services per chat room?
 */
 
 
 var restApiKey = await Bot.Secrets.GetAsync("pagerduty-api-key");
 if (restApiKey is not {Length: > 0}) {
     await Bot.ReplyAsync("Please set your PagerDuty Rest API key in a secret named `pagerduty-api-key`.\nSee https://support.pagerduty.com/docs/generating-api-keys#section-generating-an-api-key for more information about this API key.");
-    return;
-}
-
-var serviceApiKey = await Bot.Secrets.GetAsync("pagerduty-service-api-key");
-if (serviceApiKey is not {Length: > 0}) {
-    await Bot.ReplyAsync("Please set your PagerDuty Incident Service API key in a secret named `pagerduty-service-api-key`.\nThis should be assigned to a dummy escalation policy that doesn't actually notify, as Abbot will trigger on this before reassigning it.\nSee https://developer.pagerduty.com/docs/rest-api-v2/incident-creation-api/ for more information about this API key.");
     return;
 }
 
@@ -36,6 +24,8 @@ Task task = Bot.Arguments switch {
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
     ({Value: "schedules"}, var search) => ListSchedulesAsync(search),
+    ({Value: "service"}, {Value: "is"}, var serviceId) => SetServiceIdAsync(serviceId),
+    ({Value: "service"}, var serviceId, IMissingArgument _) => SetServiceIdAsync(serviceId),
     ({Value: "services"}, IMissingArgument, IMissingArgument) => ListServicesAsync(),
     ({Value: "subdomain"}, {Value: "is"}, var subdomain) => SetSubdomainAsync(subdomain),
     ({Value: "subdomain"}, var subdomain, IMissingArgument _) => SetSubdomainAsync(subdomain),
@@ -69,7 +59,12 @@ async Task PageUserAsync(IChatUser chatUser, string message) {
     if (pagerUser?.User is null) {
         return;
     }
-    var response = await CreateIncidentAsync(serviceApiKey, message, pagerUser);
+    var serviceId = await EnsureServiceIdAsync();
+    if (serviceId is null) {
+        return;
+    }
+    
+    var response = await CreateIncidentAsync(serviceId, message, pagerUser);
     var incident = response?.incident;
     if (incident is null) {
         await Bot.ReplyAsync("Something went wrong trying to create the incident.");
@@ -79,9 +74,13 @@ async Task PageUserAsync(IChatUser chatUser, string message) {
 }
 
 async Task PageTargetAsync(string target, string message) {
+    var serviceId = await EnsureServiceIdAsync();
+    if (serviceId is null) {
+        return;
+    }
     var policy = await GetEscalationPolicyAsync(target);
     if (policy is not null) {
-        var policyIncident = await CreateIncidentAsync(serviceApiKey, message, escalationPolicy: policy);
+        var policyIncident = await CreateIncidentAsync(serviceId, message, escalationPolicy: policy);
         if (policyIncident is null) {
             await Bot.ReplyAsync("Something went wrong trying to create the incident.");
             return;
@@ -97,7 +96,7 @@ async Task PageTargetAsync(string target, string message) {
             await Bot.ReplyAsync($"I do not know the on call user for the schedule `{target}`");
             return;
         }
-        var incident = await CreateIncidentAsync(serviceApiKey, message, oncall);
+        var incident = await CreateIncidentAsync(serviceId, message, oncall);
         if (incident is null) {
             await Bot.ReplyAsync("Something went wrong trying to create the incident.");
             return;
@@ -318,14 +317,6 @@ async Task ReplyWithHelpAsync() {
     await Bot.ReplyAsync($"Sorry, I did not understand that. Try `{Bot} help {Bot.SkillName}` to learn how to use the {Bot.SkillName} skill.");
 }
 
-Task<string> GetPagerDutyAccountSubdomainAsync() {
-    return Bot.Brain.GetAsAsync<string>("PAGERDUTY_SUBDOMAIN");
-}
-
-Task WritePagerDutyAccountSubdomainAsync(string subdomain) {
-    return Bot.Brain.WriteAsync("PAGERDUTY_SUBDOMAIN", subdomain);
-}
-
 // This would be the email address for a bot user in PagerDuty.
 Task<string> GetDefaultUserEmail() {
     return Bot.Brain.GetAsAsync<string>("PAGERDUTY_FROM_EMAIL");
@@ -543,8 +534,7 @@ async Task<List<dynamic>> GetSchedules(string scheduleName = null) {
 }
 
 async Task ListServicesAsync() {
-    dynamic response = await CallPagerDutyApiAsync("/services");
-    List<dynamic> services = response?.services?.ToObject<List<dynamic>>();
+    var services = await GetServicesAsync();
     if (services is null) {
         await Bot.ReplyAsync("Something went wrong calling the PagerDuty API.");
         return;
@@ -555,6 +545,11 @@ async Task ListServicesAsync() {
     }
     var replies = services.Select(service => $"{service.id}: {service.name} ({service.status}) - {service.html_url}").ToMarkdownList();
     await Bot.ReplyAsync(replies);
+}
+
+async Task<List<dynamic>> GetServicesAsync() {
+    dynamic response = await CallPagerDutyApiAsync("/services");
+    return response?.services?.ToObject<List<dynamic>>();
 }
 
 async Task ListSchedulesAsync(IArgument searchArg) {
@@ -579,7 +574,7 @@ async Task ListSchedulesAsync(IArgument searchArg) {
 }
 
 async Task<string> EnsureSubdomainAsync() {
-    var subdomain = await GetPagerDutyAccountSubdomainAsync();
+    var subdomain = await Bot.Brain.GetAsAsync<string>("PAGERDUTY_SUBDOMAIN");
     if (subdomain is not {Length: > 0}) {
         await Bot.ReplyAsync($"Please tell me your account subdomain. `{Bot} {Bot.SkillName} subdomain is {{subdomain}}`");
         return null;
@@ -592,8 +587,44 @@ async Task SetSubdomainAsync(IArgument subdomainArg) {
         await Bot.ReplyAsync("Please specify the subdomain for your PagerDuty account.");
         return;
     }
-    await WritePagerDutyAccountSubdomainAsync(subdomainArg.Value);
+    await Bot.Brain.WriteAsync("PAGERDUTY_SUBDOMAIN", subdomainArg.Value);
     await Bot.ReplyAsync($"Your PagerDuty account subdomain is now `{subdomainArg.Value}`");
+}
+
+async Task<string> EnsureServiceIdAsync() {
+    var serviceId = await Bot.Brain.GetAsAsync<string>($"{Bot.Room}|PAGERDUTY_SERVICE_ID");
+    if (serviceId is not {Length: > 0}) {
+        // Let's see if we can automatically set this.
+        var services = await GetServicesAsync();
+        if (services is {Count: 1}) {
+            serviceId = services[0].id;
+            await SetServiceIdAsync(serviceId);
+            return serviceId;
+        }
+        
+        if (services is {Count: > 1}) {
+            await Bot.ReplyAsync($"You have multiple Services associated with your PagerDuty account. Please specify the Id of the service to use for PagerDuty incidents in this room. `{Bot} {Bot.SkillName} service is {{service-id}}`\nTo see a list of services, `{Bot} {Bot.SkillName} services`");            
+        }
+        else {
+            await Bot.ReplyAsync("You do not have any Services within PagerDuty. Please go to your account in the PagerDuty website and set one up.");
+        }
+
+        return null;
+    }
+    return serviceId;
+}
+
+async Task SetServiceIdAsync(IArgument serviceIdArg) {
+    if (serviceIdArg is IMissingArgument or {Value: {Length: 0}}) {
+        await Bot.ReplyAsync("Please specify the Id for the service this room will page when creating incidents.");
+        return;
+    }
+    await SetServiceIdAsync(serviceIdArg.Value);
+}
+
+async Task SetServiceIdAsync(string serviceId) {
+    await Bot.Brain.WriteAsync($"{Bot.Room}|PAGERDUTY_SERVICE_ID", serviceId);
+    await Bot.ReplyAsync($"Your PagerDuty account service Id for this room is now `{serviceId}`");
 }
 
 async Task<dynamic> GetEscalationPolicyAsync(string query) {
