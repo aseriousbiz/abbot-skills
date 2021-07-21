@@ -1,7 +1,29 @@
 /*
 PagerDuty Skill for triggering pager duty incidents and responding to them.
-*/
 
+USAGE:
+*Configuration*
+`@abbot pager me as {email}` - to set your PagerDuty email if it's different from your chat email. Note that `@abbot my email is {email}` sets your chat email if it's currently unknown.
+`@abbot pager subdomain is {subdomain}` - to set your PagerDuty's account subdomain. Only specify the subdomain part of the URL.
+`@abbot pager service is {service-id}` - If your PagerDuty account has more than one service, you can specify which service to use for incidents for the current room. If your PagerDuty account has one service, this isn't needed.
+
+*Usage*
+`@abbot pager acknowledge` - Acknowledge triggered alerts assigned to you. Alternative usage: `@abbot pager ack`
+`@abbot pager acknowledge!` - Acknowledge all triggered not just yours. Alternative usage: `@abbot pager ack!`
+`@abbot pager acknowledge {incident1-number} {incident2-number} ... {incidentN-number}` - Acknowledge all specified incidents.
+`@abbot pager trigger @{user} {message}` - Triggers the pager and assigns it to the specified user. Alternative usage `@abbot pager page @{user} {message}`.
+Example: `@abbot pager trigger @paul did you drop the database again?`
+`@abbot pager trigger {policy} {message}` - Trigger an incident assigned to an escalation policy. Alternative usage: `@abbot pager page {policy} {message}`
+Example: `@abbot pager trigger ops the site is down`.
+`@abbot pager incidents` - List open incidents and their status. Alternative usage: `@abbot pager sup`
+`@abbot pager note {incident-number} {content}` - Adds a note to the specified incident.
+`@abbot pager notes {incident-number}` - Shows notes for the specified incident.
+`@abbot pager resolve` - Resolve acknowledged incidents assigned to you. Alternative usage: `@abbot pager res`
+`@abbot pager resolve!` - Resolve all acknowledged incidents, not just yours. Alternative usage: `@abbot pager res!`
+`@abbot pager resolve {incident1-number} {incident2-number} ... {incidentN-number}` - Resolve all specified incidents.
+`@abbot pager schedules` - Check up coming schedule, and schedule shift overrides on it.
+`@abbot pager services` - Lists the set of services associated with your PagerDuty account.
+*/
 
 var restApiKey = await Bot.Secrets.GetAsync("pagerduty-api-key");
 if (restApiKey is not {Length: > 0}) {
@@ -21,6 +43,7 @@ Task task = Bot.Arguments switch {
     ({Value: "incident"}, IArgument id, _) => ReplyWithIncidentAsync(id),
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
+    ({Value: "note"}, var id, var content) => AddNoteAndReplyAsync(id, content),
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
     ({Value: "schedules"}, var search) => ListSchedulesAsync(search),
     ({Value: "service"}, {Value: "is"}, var serviceId) => SetServiceIdAsync(serviceId),
@@ -387,6 +410,36 @@ async Task CreateIncidentNoteAsync(IArgument idArg, IArgument content) {
         return;
     }
 }
+
+async Task AddNoteAndReplyAsync(IArgument idArg, IArgument content) {
+    var incidentNumber = idArg.ToInt32();
+    if (incidentNumber is null) {
+        await Bot.ReplyAsync("That doesn't look like an incident number to me.");
+        return;
+    }
+    if (content is IMissingArgument or {Value: {Length: 0}}) {
+        await Bot.ReplyAsync("Please specify the content of the note to add");
+        return;
+    }
+    var pagerDutyUser = await GetPagerDutyUser(Bot.From);
+    if (pagerDutyUser?.User is null) {
+        return;
+    }
+    
+    var data = new {
+        note = new {
+            content = content.Value
+        }
+    };
+    
+    var result = await CallPagerDutyApiAsync($"/incidents/{incidentNumber}/notes", HttpMethod.Post, pagerDutyUser, data);
+    if (result is null) {
+        await Bot.ReplyAsync("Sorry, I couldn't do it. :(");
+        return;
+    }
+    await Bot.ReplyAsync($"Got it! Note created: {result.note.content}");
+}
+
 
 async Task ReplyWithIncidentNotesAsync(IArgument idArg) {
     var incidentNumber = idArg.ToInt32();
