@@ -9,18 +9,88 @@
 # `@abbot tweet follow {username}` -- follows an account
 # `@abbot tweet unfollow {username}`  -- unfollows an account
 # `@abbot tweet like {link to tweet}` -- likes a tweet (can also use FAV or FAVE)
+#
+#  AUTHORIZATION
+#  --------------
+# `@abbot tweet auth` - to authenticate the Twitter user this skill will manage in the current room.
+# `@abbot tweet auth {pin}` - to complete the authentication process. The pin is supplied by Twitter after you authenticate to Twitter in the browser.
+# `@abbot tweet auth user` - to find out which Twitter account the current room is authorized to manage.
 
 import re
 import requests
 from requests_oauthlib import OAuth1
 from urllib.parse import quote_plus
 
-CONSUMER_KEY = bot.secrets.read("consumerkey")
-CONSUMER_SECRET = bot.secrets.read("consumersecret")
-ACCESS_TOKEN = bot.secrets.read("accesstoken")
-ACCESS_TOKEN_SECRET = bot.secrets.read("accesstokensecret")
+ABBOT_TWITTER_CLIENT_URL = 'https://abbot.run/twitter-client-proxy/trigger/yvX1lQH_rgvNjdtwFbmt1Tg7'
+
+
+def get_skill_secret():
+  return bot.brain.read(bot.room + "|SKILL_SECRET")
+
+
+SKILL_SECRET = get_skill_secret()
+
+
+def fetch_auth_url():
+    """Make a request to the Abbot Twitter Client for an Auth URL"""
+    
+    data = {
+      'endpoint': 'auth'
+    }
+
+    r = requests.post(url=ABBOT_TWITTER_CLIENT_URL, json=data)
+    r.raise_for_status()
+    return r.json()
 
   
+def set_auth_pin(pin):
+    """
+    Make a request to the Abbot Twitter Client to supply the authorization PIN for pin based authorization
+    https://developer.twitter.com/en/docs/authentication/oauth-1-0a/pin-based-oauth
+    """
+    data = {
+      'endpoint': 'pin',
+      'pin': pin,
+      'skill_secret': SKILL_SECRET
+    }
+
+    r = requests.post(url=ABBOT_TWITTER_CLIENT_URL, json=data)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_user():
+  """
+  Retrieves the current authenticated user.
+  """
+  data = {
+    'endpoint': "account/verify_credentials.json",
+    'method': "GET",
+    'skill_secret': SKILL_SECRET
+  }
+  r = requests.post(url=ABBOT_TWITTER_CLIENT_URL, json=data)
+  r.raise_for_status()
+  return r.json()
+
+
+def reply_with_current_user():
+  try:
+    user = get_user()
+    if user is None:
+      bot.reply("No Twitter user is authorized for this room or the authorization has been revoked. `@abbot tweet auth` to authorize a Twitter account")
+      return
+    username = user.get("screen_name")
+    bot.reply_with_image(user.get("profile_image_url_https"), "The twitter user [@" + username + "](https://twitter.com/" + username + ") is attached to this room.")
+  except:
+    bot.reply("No Twitter user is authorized for this room or the authorization has been revoked. `@abbot tweet auth` to authorize a Twitter account")
+
+def write_skill_secret(secret):
+  bot.brain.write(bot.room + "|SKILL_SECRET", secret)
+
+  
+def delete_skill_secret():
+  bot.brain.delete(bot.room + "|SKILL_SECRET")
+
 def get_tweet_id(link):
     """Try to extract a tweet id from a link"""
     # A representative tweet link: https://twitter.com/haacked/status/842543742523334656
@@ -37,6 +107,7 @@ def get_tweet_id(link):
     except:
       return None, None
 
+
 def prep_reply_text(screen_name, text):
     """Replies have to contain the original tweeter's screen_name"""
     if screen_name in text:
@@ -49,21 +120,21 @@ def prep_reply_text(screen_name, text):
 
 
 def send(action, **kwargs):
-    """Make a request to the Twitter API"""
-    base_url = "https://api.twitter.com/1.1/"
+    """Make a request to the Abbot Twitter Client"""
     
     if kwargs:
         querystring = "&".join(["{}={}".format(k, quote_plus(v)) for (k, v) in kwargs.items()])
-        url = base_url + "{}?{}".format(action, querystring)
+        endpoint = "{}?{}".format(action, querystring)
     else:
-        url = base_url + action
+        endpoint = action
     
-    oauth = OAuth1(CONSUMER_KEY, 
-                   client_secret=CONSUMER_SECRET,
-                   resource_owner_key=ACCESS_TOKEN,
-                   resource_owner_secret=ACCESS_TOKEN_SECRET)
-    
-    r = requests.post(url=url, auth=oauth)
+    data = {
+      'endpoint': endpoint,
+      'method': 'POST',
+      'skill_secret': SKILL_SECRET
+    }
+
+    r = requests.post(url=ABBOT_TWITTER_CLIENT_URL, json=data)
     r.raise_for_status()
     return r.json()
 
@@ -114,16 +185,46 @@ def tweet(cmd, param, words):
         tweet_id = results.get("id")
         bot.reply(":boom: just tweeted it! :point_right: https://twitter.com/{}/status/{}".format(screen_name, tweet_id))
 
+
 # Main dispatch logic
-if None in (CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET):
-    bot.reply("A secret required for this skill to run has not been set. Please review and ensure all your secrets have been configured.")
-else:
+def main():
     words = bot.arguments.split(" ")
     cmd = words[0].upper()
     param = None
+    
+    if cmd == "AUTH":
+      if len(words) == 1:
+        # Initiate Auth.
+        response = fetch_auth_url()
+        skill_secret = response.get("skill_secret")
+        auth_url = response.get("auth_url")
+        write_skill_secret(skill_secret)
+        bot.reply("Please [click here](" + auth_url + ") to authenticate this skill with Twitter. After you authenticate, tell me the pin like so: `@abbot " + bot.skill_name + " auth {pin}` ")
+      else:
+        pin = words[1]
+        if (pin == "clear"):
+          delete_skill_secret()
+          bot.reply("Cleared authentication info for this room")
+        elif (pin == "user"):
+          reply_with_current_user()
+        else: # Confirm the PIN
+          response = set_auth_pin(pin)
+          success = response.get("success")
+          if (success):
+            reply_with_current_user()
+            return
+          bot.reply(response.get("message"))
+    elif cmd == "USER":
+      reply_with_current_user()
+    else: # Run the rest of the commands, but make sure SKILL_SECRET is set.
+      if SKILL_SECRET is None:
+        bot.reply("To set up this skill, run `@abot " + bot.skill_name + " auth` to authenticate with the Twitter account you want to manage with this skill from this room")
+        return
+      if len(words) > 1:
+        param = words[1]
+        tweet(cmd, param, words)
+      else:
+        bot.reply("Try `@abbot help tweet` to learn how to use the `tweet` skill.")
 
-    if len(words) > 1:
-      param = words[1]
-      tweet(cmd, param, words)
-    else:
-      bot.reply("Try `@abbot help tweet` to learn how to use the `tweet` skill.")
+
+main()
