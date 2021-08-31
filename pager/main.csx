@@ -1,3 +1,4 @@
+﻿#load ".meta/globals.csx" // This is required for Intellisense in VS Code, etc. DO NOT TOUCH THIS LINE!
 /*
 PagerDuty Skill for triggering pager duty incidents and responding to them.
 
