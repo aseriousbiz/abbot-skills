@@ -1,0 +1,81 @@
+name: Deploy Changed Skills
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to compare against'
+        required: false
+        default: 'main'
+  push:
+    branches:
+      - main
+
+jobs:
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed1: ${{ steps.filter1.outputs.changed }}
+      files1: ${{ steps.filter1.outputs.changed_files }}
+      changed2: ${{ steps.filter2.outputs.changed }}
+      files2: ${{ steps.filter2.outputs.changed_files }}
+    steps:
+
+    - name: Checkout branch
+      uses: actions/checkout@v2
+
+    - uses: dorny/paths-filter@v2
+      if: ${{ github.event_name != 'workflow_dispatch' }}
+      id: filter1
+      with:
+        # Enable listing of files matching each filter.
+        # Paths to files will be available in `${FILTER_NAME}_files` output variable.
+        # Paths will be escaped and space-delimited.
+        # Output is usable as command-line argument list in Linux shell
+        list-files: shell
+
+        # In this example all changed files are passed to the following action to do
+        # some custom processing.
+        filters: |
+          changed:
+            - added|modified: '*/main.csx'
+            - added|modified: '*/main.py'
+            - added|modified: '*/main.js'
+
+    - uses: dorny/paths-filter@v2
+      if: ${{ github.event_name == 'workflow_dispatch' }}
+      id: filter2
+      with:
+        base: ${{ github.event.inputs.branch }}
+        # Enable listing of files matching each filter.
+        # Paths to files will be available in `${FILTER_NAME}_files` output variable.
+        # Paths will be escaped and space-delimited.
+        # Output is usable as command-line argument list in Linux shell
+        list-files: shell
+
+        # In this example all changed files are passed to the following action to do
+        # some custom processing.
+        filters: |
+          changed:
+            - added|modified: '*/main.csx'
+            - added|modified: '*/main.py'
+            - added|modified: '*/main.js'
+
+  deploy1:
+    needs: changes
+    if: ${{ needs.changes.outputs.changed1 == 'true' && github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Deploy changed skills
+      run: script/deploy -n ${{ needs.changes.outputs.files1 }}
+
+  deploy2:
+    needs: changes
+    if: ${{ needs.changes.outputs.changed2 == 'true' && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Deploy changed skills
+      run: script/deploy -n ${{ needs.changes.outputs.files2 }}
