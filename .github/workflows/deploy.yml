@@ -10,6 +10,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
 
@@ -77,5 +80,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+
+    - name: List changed skills
+      if: github.event_name == 'pull_request'
+      run: script/deploy -n ${{ needs.changes.outputs.files }}
+
     - name: Deploy changed skills
+      if: github.event_name != 'pull_request'
+      # TODO: install abbot and take out the -n flag here
       run: script/deploy -n ${{ needs.changes.outputs.files }}
