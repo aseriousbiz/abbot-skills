@@ -1,0 +1,40 @@
+#!/bin/bash -eu
+{ set +x; } 2>/dev/null
+SOURCE=$0
+DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+
+OS="Mac"
+if [[ -e "/c/" ]]; then
+  OS="Windows"
+fi
+
+DRYRUN=0
+skills=()
+
+while (( "$#" )); do
+  case "$1" in
+    -n|--dry-run)
+    DRYRUN=1
+    ;;
+    --trace)
+      { set -x; } 2>/dev/null
+    ;;
+    -*|--*=) # unsupported flags
+      #echo "Error: Unsupported flag $1" >&2
+      #exit 1
+    ;;
+    *)
+      skills+=($1)
+    ;;
+  esac
+  shift
+done
+
+for skill in ${skills[@]}; do
+  echo "Deploying skill $skill"
+  if [[ x"$DRYRUN" == x"1" ]]; then
+    echo "> abbot deploy $skill"
+  else
+    abbot deploy $skill
+  fi
+done
