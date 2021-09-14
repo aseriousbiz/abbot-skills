@@ -17,6 +17,11 @@ if (Bot.Arguments is { Count: 0 }) {
     return;
 }
 
+if (Bot.From.TimeZone is null) {
+    await Bot.ReplyAsync($"I do not know your timezone. You can tell me using `{Bot} my tz is {{tz}}` (where tz is the TZ database name in https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) or by telling me your location, `@abbot my location is {{zip, city, or address}}`");
+    return;
+}
+
 var time = Bot.Arguments.First();
 
 // If no target time is specified, use the current time for the user or Abbot
@@ -24,11 +29,6 @@ var time = Bot.Arguments.First();
 var targetTime = time.ToLocalTime() is LocalTime localTime
     ? localTime
     : Bot.From.GetLocalTime();
-
-if (targetTime is null) {
-    await Bot.ReplyAsync($"I do not know your timezone. You can tell me using `{Bot} my tz is {{tz}}` (where tz is the TZ database name in https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) or by telling me your location, `@abbot my location is {{zip, city, or address}}`");
-    return;
-}
 
 var mentions = GetOrderedNormalizedMentions();
 
