@@ -12,7 +12,7 @@
   "Neat! We also added the `grafana` skill along with some test data. Say `@abbot grafana db ""home:memory / cpu""`",
   "Nice! say `@abbot joke` a few times to have Abbot tell you some jokes. This is an example of a list skill. Say `@abbot help list` to learn how to create your own lists.",
   "Bravo! Abbot can also make a good faith effort to answer arbitrary questions. For example, try saying `@abbot what is the height of Mt. Everest?`",
-  "Hooray! That's all we have to show for now! Feel free to play around with the console here. When you're ready, install Abbot into Slack to experience the full power of Abbot."
+  "Hooray! That's all we have to show for now! Feel free to play around with the console here. When you're ready, install Abbot into Slack to experience the full power of Abbot. And if you have any feedback, say `@abbot feedback And type your feedback here`"
 ]
 
 def get_step():
