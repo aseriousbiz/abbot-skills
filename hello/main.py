@@ -13,6 +13,7 @@ To learn how to use a skill, type `@abbot help` followed by the skill name. Say 
   "Good. We also created some fake users. Say `@abbot tz 2:30pm me @misspiggy @kermit @bugsbunny` Play around with different times etc.",
   "Neat! We also added the `grafana` skill along with some test data. Say `@abbot grafana db ""home:memory / cpu""`",
   "Nice! say `@abbot joke` a few times to have Abbot tell you some jokes. This is an example of a list skill. Say `@abbot help list` to learn how to create your own lists.",
+  "Bravo! Abbot can also make a good faith effort to answer arbitrary questions. For example, try saying `@abbot what is the height of Mt. Everest?`",
   "Fantastic! That's all we have to show for now! Feel free to play around with the console here. When you're ready, install Abbot into Slack to experience the full power of Abbot."
 ]
 
