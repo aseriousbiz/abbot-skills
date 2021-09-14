@@ -2,8 +2,8 @@
   """
 Welcome to Abbot!
 This skill is a brief tutorial that walks through some things to try in the Bot Console.
-Abbot responds to commands called \"skills\". For example, `hello` is a skill (the one you just called!).
-To learn how to use a skill, type `help` followed by the skill name skill. Say `@abbot help hello` (without the quotes) to learn how to use the `hello` skill. Then say `@abbot hello again` to move to the next step in the tutorial.
+Abbot responds to commands called \"skills\". For example, `hello` is a skill (the one you just called!). To call a skill, mention Abbot followed by the skill name and then arguments (if any). Note that in the Bot Console, Abbot is already mentioned for you so you only need to type the skill name and arguments. 
+To learn how to use a skill, type `@abbot help` followed by the skill name. Say `@abbot help hello` (without the quotes) to learn how to use the `hello` skill. Then say `@abbot hello again` to move to the next step in the tutorial.
   """,
   "Great! Now say `@abbot help` for high level help. Remember, say `@abbot hello again` to move to the next step.",
   "Excellent! say `@abbot skills` to see the list of available skills.",
