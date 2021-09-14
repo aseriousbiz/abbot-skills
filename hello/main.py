@@ -33,10 +33,10 @@ if command == "reset":
 step = get_step()
 
 if command == "again" or command == "next":
-  step = (step + 1) % len(steps)
+  step = (step + 1) % len(steps) # modulo to loop around to the beginning when we reach the end.
   write_step(step)
 elif command == "previous":
-  step = (step - 1) % len(steps)
+  step = (step - 1) % len(steps) # modulo to loop around to the end when we reach the beginning.
   write_step(step)
 elif command == "help":
   bot.reply("Nice try! I think what you want is `@abbot help hello` to get help on the `hello` skill.")
