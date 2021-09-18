@@ -22,10 +22,10 @@ from requests_oauthlib import OAuth1
 from urllib.parse import quote_plus
 
 ABBOT_TWITTER_CLIENT_URL = 'https://abbot.run/twitter-client-proxy/trigger/yvX1lQH_rgvNjdtwFbmt1Tg7'
-
+secret_key = str(bot.room) + "|SKILL_SECRET"
 
 def get_skill_secret():
-  return bot.brain.read(bot.room + "|SKILL_SECRET")
+  return bot.brain.read(secret_key)
 
 
 SKILL_SECRET = get_skill_secret()
@@ -85,11 +85,11 @@ def reply_with_current_user():
     bot.reply("No Twitter user is authorized for this room or the authorization has been revoked. `@abbot tweet auth` to authorize a Twitter account")
 
 def write_skill_secret(secret):
-  bot.brain.write(bot.room + "|SKILL_SECRET", secret)
+  bot.brain.write(secret_key, secret)
 
   
 def delete_skill_secret():
-  bot.brain.delete(bot.room + "|SKILL_SECRET")
+  bot.brain.delete(secret_key)
 
 def get_tweet_id(link):
     """Try to extract a tweet id from a link"""
