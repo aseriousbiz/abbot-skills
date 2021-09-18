@@ -179,11 +179,17 @@ def tweet(cmd, param, words):
         else:
             bot.reply("That doesn't look like a link to a valid Tweet.")
     else:
-        results = send("statuses/update.json", status=bot.arguments)
-        user = results.get("user")
-        screen_name = user.get("screen_name")
-        tweet_id = results.get("id")
-        bot.reply(":boom: just tweeted it! :point_right: https://twitter.com/{}/status/{}".format(screen_name, tweet_id))
+        # Replace @@haacked with @haacked. This gives us an escape hatch when a twitter username matches Slack.
+        tweet_text = re.sub(r'(?:(?<=^)|(?<=\s))@@([a-zA-Z0-9_]{1,15})', r'@\1', bot.arguments)
+        # if tweet_text contains a subscring of the form <@U.?> then reply that it is not valid
+        if re.search(r'<@U.+?>', tweet_text):
+            bot.reply("Whoops, it looks like you intended to include a Twitter username that just happens to match a Slack username. You can use `@@` in that case. For example, for Twitter user `@haacked` you can specify `@@haacked`")
+        else:
+            results = send("statuses/update.json", status=tweet_text)
+            user = results.get("user")
+            screen_name = user.get("screen_name")
+            tweet_id = results.get("id")
+            bot.reply(":boom: just tweeted it! :point_right: https://twitter.com/{}/status/{}".format(screen_name, tweet_id))
 
 
 # Main dispatch logic
