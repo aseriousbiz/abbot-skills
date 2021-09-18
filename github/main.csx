@@ -17,7 +17,8 @@ using Octokit;
 // The key used to store and retrieve the default repository.
 // Embedding the room name ensures the default repository is per-room so
 // each room can have its own default.
-readonly string DefaultRepositoryBrainKey = $"{Bot.Room}|DefaultRepository";
+var roomKey = Bot.Room.Id ?? Bot.Room.Name;;
+readonly string DefaultRepositoryBrainKey = $"{roomKey}|DefaultRepository";
 
 // GitHub Developer Token with access to the repository and org to query.
 var githubToken = await Bot.Secrets.GetAsync("GitHubToken");
