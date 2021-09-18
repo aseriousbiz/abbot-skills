@@ -639,8 +639,10 @@ async Task SetSubdomainAsync(IArgument subdomainArg) {
     await Bot.ReplyAsync($"Your PagerDuty account subdomain is now `{subdomainArg.Value}`");
 }
 
+var roomKey = Bot.Room.Id ?? Bot.Room.Name;
+
 async Task<string> EnsureServiceIdAsync() {
-    var serviceId = await Bot.Brain.GetAsAsync<string>($"{Bot.Room}|PAGERDUTY_SERVICE_ID");
+    var serviceId = await Bot.Brain.GetAsAsync<string>($"{roomKey}|PAGERDUTY_SERVICE_ID");
     if (serviceId is not {Length: > 0}) {
         // Let's see if we can automatically set this.
         var services = await GetServicesAsync();
@@ -671,7 +673,7 @@ async Task SetServiceIdAsync(IArgument serviceIdArg) {
 }
 
 async Task SetServiceIdAsync(string serviceId) {
-    await Bot.Brain.WriteAsync($"{Bot.Room}|PAGERDUTY_SERVICE_ID", serviceId);
+    await Bot.Brain.WriteAsync($"{roomKey}|PAGERDUTY_SERVICE_ID", serviceId);
     await Bot.ReplyAsync($"Your PagerDuty account service Id for this room is now `{serviceId}`");
 }
 
