@@ -153,16 +153,18 @@ if (subject.Value is "to") {
     return;
 }
 
+string roomKey = Bot.Room.Id ?? Bot.Room.Name;
+
 async Task<string> GetDefaultRepository() {
-    return await Bot.Brain.GetAsync($"{Bot.Room}_Repo");
+    return await Bot.Brain.GetAsync($"{roomKey}_Repo");
 }
 
 Task SetDefaultRepository(string repo) {
-    return Bot.Brain.WriteAsync($"{Bot.Room}_Repo", repo);
+    return Bot.Brain.WriteAsync($"{roomKey}_Repo", repo);
 }
 
 async Task<HashSet<string>> GetDeploymentTargets() {
-    return await Bot.Brain.GetAsync($"{Bot.Room}_Targets") ?? new HashSet<string>();
+    return await Bot.Brain.GetAsync($"{roomKey}_Targets") ?? new HashSet<string>();
 }
 
 async Task AddDeploymentTarget(string target) {
@@ -178,7 +180,7 @@ async Task RemoveDeploymentTarget(string target) {
 }
 
 Task SaveDeploymentTargets(HashSet<string> targets) {
-    return Bot.Brain.WriteAsync($"{Bot.Room}_Targets", targets);
+    return Bot.Brain.WriteAsync($"{Bot.Room.Id}_Targets", targets);
 }
 
 async Task<(string, string)> GetOwnerAndRepo(IArgument argument) {
