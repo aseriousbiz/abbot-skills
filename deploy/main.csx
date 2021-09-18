@@ -180,7 +180,7 @@ async Task RemoveDeploymentTarget(string target) {
 }
 
 Task SaveDeploymentTargets(HashSet<string> targets) {
-    return Bot.Brain.WriteAsync($"{Bot.Room.Id}_Targets", targets);
+    return Bot.Brain.WriteAsync($"{roomKey}_Targets", targets);
 }
 
 async Task<(string, string)> GetOwnerAndRepo(IArgument argument) {
