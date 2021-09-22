@@ -22,7 +22,7 @@ from requests_oauthlib import OAuth1
 from urllib.parse import quote_plus
 
 ABBOT_TWITTER_CLIENT_URL = 'https://abbot.run/twitter-client-proxy/trigger/yvX1lQH_rgvNjdtwFbmt1Tg7'
-secret_key = str(bot.room) + "|SKILL_SECRET"
+secret_key = str(bot.room.cache_key) + "|SKILL_SECRET"
 
 def get_skill_secret():
   return bot.brain.read(secret_key)
