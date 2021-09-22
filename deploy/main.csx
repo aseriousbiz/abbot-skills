@@ -142,7 +142,7 @@ if (subject.Value is "to") {
         Task = DeployTask.Deploy,
         Payload = new() {
             {"user", Bot.From.Name },
-            {"room", Bot.Room },
+            {"room", Bot.Room.Name },
             {"skill", Bot.SkillName },
         },
         Description = $"{Bot.From.Name} deployed `{reference}` to `{target}`"
