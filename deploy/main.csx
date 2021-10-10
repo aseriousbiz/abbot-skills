@@ -13,7 +13,7 @@ Manage GitHub deployments to deployment targets. A deployment target is a named 
 * `@abbot deploy list targets` - Lists available deployment targets.
 * `@abbot deploy add target {target}` - Adds a deployment target.
 * `@abbot deploy remove target {target}` - Removes a deployment target.
-* `@abobt deploy {branch or SHA} to {target} [for {owner}/{repo}]` - Creates a GitHub deployment of branch/SHA to a deployment target.
+* `@abbot deploy {branch or SHA} to {target} [for {owner}/{repo}]` - Creates a GitHub deployment of branch/SHA to a deployment target.
 Note: You can specify a default repository for a room using `@abbot repo {owner}/{repo}`. that way you don't have to append each status command with `for {owner}/{repo}`.
 
 GitHub Deploy skill was inspired by https://github.com/stephenyeargin/hubot-github-deployments
