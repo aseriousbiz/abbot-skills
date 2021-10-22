@@ -5,6 +5,7 @@ PagerDuty Skill for triggering pager duty incidents and responding to them.
 USAGE:
 *Configuration*
 `@abbot pager me as {email}` - to set your PagerDuty email if it's different from your chat email. Note that `@abbot my email is {email}` sets your chat email if it's currently unknown.
+`@abbot pager bot is {email}` - to set the email address for your PagerDuty bot account.
 `@abbot pager subdomain is {subdomain}` - to set your PagerDuty's account subdomain. Only specify the subdomain part of the URL.
 `@abbot pager service is {service-id}` - If your PagerDuty account has more than one service, you can specify which service to use for incidents for the current room. If your PagerDuty account has one service, this isn't needed.
 
