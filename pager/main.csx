@@ -43,6 +43,8 @@ Task task = Bot.Arguments switch {
     ({Value: "forget"}, {Value: "me"}, IMissingArgument) => ForgetPagerDutyEmail(),
     ({Value: "incident"}, IArgument id, _) => ReplyWithIncidentAsync(id),
     (IMissingArgument, _, _) or ({Value: "me"}, IMissingArgument, _) => ReplyWithPagerUserInfo(Bot.From),
+    ({Value: "bot"}, IMissingArgument _) => ReportBotUserEmailAsync(),
+    ({Value: "bot"}, {Value: "is"}, var emailArg) => SetPagerDutyBotEmailAsync(emailArg),
     ({Value: "me"}, {Value: "as"}, var emailArg) => SetPagerDutyEmail(emailArg),
     ({Value: "note"}, var id, var content) => AddNoteAndReplyAsync(id, content),
     ({Value: "notes"}, IArgument id, _) => ReplyWithIncidentNotesAsync(id),
@@ -285,28 +287,6 @@ async Task AmIOnCallAsync() {
     await Bot.ReplyAsync(responses.ToMarkdownList());
 }
 
-async Task SetPagerDutyBotConfigAsync(IArguments arguments) {
-    Task task = arguments switch {
-        (IMissingArgument, _, _) => ReportBotUserEmailAsync(),
-        ({Value: "id"}, IArgument idArg, IMissingArgument) => SetPagerDutyBotIdAsync(idArg),
-        ({Value: "id"}, {Value: "is"}, IArgument idArg) => SetPagerDutyBotIdAsync(idArg),
-        (var emailArg, IMissingArgument, _) => SetPagerDutyBotEmailAsync(emailArg),
-        ({Value: "is"}, var emailArg, _) => SetPagerDutyBotEmailAsync(emailArg),
-        _ => ReplyWithHelpAsync()
-    };
-    await task;
-}
-
-async Task SetPagerDutyBotIdAsync(IArgument emailArg) {
-    var botEmail = emailArg.Value;
-    if (!botEmail.Contains('@')) {
-        await Bot.ReplyAsync("Please specify a valid email address for the PagerDuty bot user. For example, `{Bot} {Bot.SkillName} bot is {{email}}`.");
-        return;
-    }
-    await Bot.Brain.WriteAsync("PAGERDUTY_FROM_EMAIL", botEmail);
-    await Bot.ReplyAsync($"Great! I've set the default PagerDuty bot email to `{botEmail}`.");
-}
-
 async Task ReportBotUserEmailAsync() {
     var botUserEmail = await GetDefaultUserEmail();
     if (botUserEmail is not {Length: > 0}) {
@@ -323,7 +303,7 @@ async Task SetPagerDutyBotEmailAsync(IArgument emailArg) {
         await Bot.ReplyAsync("Please specify a valid email address for the PagerDuty bot user. For example, `{Bot} {Bot.SkillName} bot is {{email}}`.");
         return;
     }
-    await Bot.Brain.WriteAsync("PAGERDUTY_FROM_EMAIL", botEmail);
+    await WriteDefaultUserEmail(botEmail);
     await Bot.ReplyAsync($"Great! I've set the default PagerDuty bot email to `{botEmail}`.");
 }
 
@@ -347,7 +327,7 @@ Task WriteDefaultUserEmail(string email) {
 async Task<string> EnsureBotUserEmailSetAsync() {
     var botUserEmail = await GetDefaultUserEmail();
     if (botUserEmail is not {Length: > 0}) {
-        await Bot.ReplyAsync($@"Please set the email of the default ""actor"" user for incident creation and modification. This would be the email address for a bot user in PagerDuty.
+        await Bot.ReplyAsync($@"Please set the email of the default ""actor"" user for incident creation and modification. This would be the email address for a Bot User in PagerDuty.
 `{Bot} {Bot.SkillName} bot is {{email}}`");
         return null;
     }
