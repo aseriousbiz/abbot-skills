@@ -342,6 +342,10 @@ async Task ReplyWithIncidentAsync(IArgument idArg) {
         return;
     }
     var result = await CallPagerDutyApiAsync($"/incidents/{incidentNumber.Value}");
+    if (result is null) {
+        await Bot.ReplyAsync($"I couldn't find an incident with number {incidentNumber.Value}.");
+        return;
+    }
     await Bot.ReplyAsync(FormatIncident(result.incident));
 }
 
@@ -361,14 +365,14 @@ async Task<List<dynamic>> GetIncidentsAsync(params IncidentStatus[] statuses) {
     var endpoint = "/incidents?sort_by=incident_number:asc"
         + statuses.Aggregate(string.Empty, (accumulate, status) => $"&statuses[]={status.ToString().ToLowerInvariant()}{accumulate}");
     var result = await CallPagerDutyApiAsync(endpoint);
-    return result.incidents.ToObject<List<dynamic>>() ?? new List<dynamic>();
+    return result?.incidents?.ToObject<List<dynamic>>() ?? new List<dynamic>();
 }
 
 async Task<List<dynamic>> GetAssignedIncidentsAsync(PagerDutyUser pagerDutyUser) {
     // When user_ids[] are specified, only triggered and acknowledged are returned because resolved are not assigned to anyone.
     var endpoint = $"/incidents?sort_by=incident_number:asc&user_ids[]={pagerDutyUser.User.id}";
     var result = await CallPagerDutyApiAsync(endpoint);
-    return result.incidents.ToObject<List<dynamic>>() ?? new List<dynamic>();
+    return result?.incidents?.ToObject<List<dynamic>>() ?? new List<dynamic>();
 }
 
 string FormatIncident(dynamic incident) {
