@@ -361,14 +361,14 @@ async Task<List<dynamic>> GetIncidentsAsync(params IncidentStatus[] statuses) {
     var endpoint = "/incidents?sort_by=incident_number:asc"
         + statuses.Aggregate(string.Empty, (accumulate, status) => $"&statuses[]={status.ToString().ToLowerInvariant()}{accumulate}");
     var result = await CallPagerDutyApiAsync(endpoint);
-    return result.incidents.ToObject<List<dynamic>>();
+    return result.incidents.ToObject<List<dynamic>>() ?? new List<dynamic>();
 }
 
 async Task<List<dynamic>> GetAssignedIncidentsAsync(PagerDutyUser pagerDutyUser) {
     // When user_ids[] are specified, only triggered and acknowledged are returned because resolved are not assigned to anyone.
     var endpoint = $"/incidents?sort_by=incident_number:asc&user_ids[]={pagerDutyUser.User.id}";
     var result = await CallPagerDutyApiAsync(endpoint);
-    return result.incidents.ToObject<List<dynamic>>();
+    return result.incidents.ToObject<List<dynamic>>() ?? new List<dynamic>();
 }
 
 string FormatIncident(dynamic incident) {
@@ -500,6 +500,9 @@ async Task<PagerDutyUser> GetPagerDutyUser(IChatUser user) {
     var count = response?.users?.Count ?? 0;
     if (count is 1) {
         pagerDutyUser.User = response.users[0];
+        if (pagerDutyUser.User is null) {
+            await Bot.ReplyAsync("The Pager Duty API returned a user, but that user is null somehow.");
+        }
         return pagerDutyUser;
     }
     await Bot.ReplyAsync($"Sorry, I expected to get 1 user back for {email}, but got {count} :sweat:. If your PagerDuty email is not {email} use `{Bot} pager me as {{email}}`");
@@ -522,7 +525,13 @@ async Task<dynamic> CallPagerDutyApiAsync(string path, HttpMethod method = null,
         headers["From"] = fromUser.PagerDutyEmail;
     }
     var endpoint = new Uri($"https://api.pagerduty.com{path}");
-    return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, data, headers);
+    try {
+        return await Bot.Http.SendJsonAsync(endpoint, method ?? HttpMethod.Get, data, headers);
+    }
+    catch(Exception e) {
+        await Bot.ReplyAsync($"Exception calling the PagerDuty API. {e.Message}");
+        return null;
+    }
 }
 
 async Task<dynamic> CreateIncidentAsync(string serviceId, string message, PagerDutyUser assignee = null, dynamic escalationPolicy = null) {
@@ -559,7 +568,7 @@ async Task<List<dynamic>> GetSchedules(string scheduleName = null) {
             ? $"/schedules?query={Uri.EscapeDataString(scheduleName)}"
             : $"/schedules";
     var response = await CallPagerDutyApiAsync(endpoint);
-    return response?.schedules?.ToObject<List<dynamic>>();
+    return response?.schedules?.ToObject<List<dynamic>>() ?? new List<dynamic>();
 }
 
 async Task ListServicesAsync() {
@@ -578,7 +587,11 @@ async Task ListServicesAsync() {
 
 async Task<List<dynamic>> GetServicesAsync() {
     dynamic response = await CallPagerDutyApiAsync("/services");
-    return response?.services?.ToObject<List<dynamic>>();
+    var services = response?.services?.ToObject<List<dynamic>>();
+    if (services is null) {
+        await Bot.ReplyAsync("Something went wrong calling the PagerDuty API. Could not retrieve services.");
+    }
+    return services ?? new List<dynamic>();
 }
 
 async Task ListSchedulesAsync(IArgument searchArg) {
