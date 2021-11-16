@@ -17,25 +17,32 @@ bot_headers = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 def check_link(url):
   if url.startswith("mailto:") or url.startswith("tel:"):
     return
-  r = requests.head(url, headers=bot_headers)
-  if r.status_code in [404, 500, 502, 503, 504]:
-    bot.reply(":warning: {} returned status **{}**".format(url, r.status_code))
+  try:
+    r = requests.head(url, headers=bot_headers)
+    if r.status_code in [404, 500, 502, 503, 504]:
+        bot.reply(":warning: {} returned status **{}**".format(url, r.status_code))
+  
+  except:
+    bot.reply(":octagonal-sign: Could not reach `{}` while crawling `{}`".format(url, args))
+    
 
 def check_links(url):
   """Check any hyperlinks in the data and report any issues to chat."""
-  r = requests.get(url, headers=bot_headers)
-  r.raise_for_status()
+  try:
+    r = requests.get(url, headers=bot_headers)
+    r.raise_for_status()
     
-  soup = BeautifulSoup(r.text, 'html.parser')
-  links = soup.find_all('a', href=True)
-  url_parts = urlparse(url)
-  for link in links:
-    target = link['href']
-    if target[0] == "/" or target[0] == "#":
-        target = "{}://{}{}".format(url_parts.scheme, url_parts.netloc, link['href'])
-    
-    check_link(target)
-  bot.reply("Finished checking `{}` for 404s".format(url))
+    soup = BeautifulSoup(r.text, 'html.parser')
+    links = soup.find_all('a', href=True)
+    url_parts = urlparse(url)
+    for link in links:
+      target = link['href']
+      if target[0] == "/" or target[0] == "#":
+          target = "{}://{}{}".format(url_parts.scheme, url_parts.netloc, link['href'])
+      check_link(target)
+    bot.reply("Finished checking `{}` for 404s".format(url))
+  except ConnectionError:
+    bot.reply("Error checking for 404s. Could not reach `{}`.".format(url))
 
 if len(bot.arguments) > 0:
   check_links(bot.arguments)
