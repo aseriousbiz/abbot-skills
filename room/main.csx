@@ -1,15 +1,20 @@
 ﻿#load ".meta/globals.csx" // This is required for Intellisense in VS Code, etc. DO NOT TOUCH THIS LINE!
+/**
+ * @abbot room create {room-name} - Creates a room with the given name.
+ * @abbot room topic #room {topic} - Sets a topic for the specified room
+ * @abbot room purpose #room  {purpose} - Sets a purpose for the specified room
+ * @abbot room topic {topic} - Sets a topic for the current room
+ * @abbot room purpose {purpose} - Sets a purpose for the current room
+ * @abbot room archive #room - Archives the specified room
+ * @abbot room invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
+ */
 Task action = Bot.Arguments switch {
     ({Value: "create"}, var room) => CreateRoomAsync(room.Value),
     ({Value: "archive"}, IRoomArgument roomArg) => ArchiveRoomAsync(roomArg.Room),
-    ({Value: "invite"}, _) => InviteUsersAsync(Bot.Arguments.Skip(1)), // Skip the invite part.
-    (IRoomArgument roomArg, {Value: "topic"}, {Value: "is"}, var topicArg) => SetRoomTopicAsync(roomArg.Room, topicArg.Value),
-    (IRoomArgument roomArg, {Value: "purpose"}, {Value: "is"}, var purposeArg) => SetRoomPurposeAsync(roomArg.Room, purposeArg.Value),
-    (IRoomArgument roomArg, {Value: "topic"}, var topicArg) => SetRoomTopicAsync(roomArg.Room, topicArg.Value),
-    (IRoomArgument roomArg, {Value: "purpose"}, var purposeArg) => SetRoomPurposeAsync(roomArg.Room, purposeArg.Value),
-    ({Value: "topic"}, {Value: "is"}, var topicArg) => SetRoomTopicAsync(Bot.Room, topicArg.Value),
-    ({Value: "purpose"}, {Value: "is"}, var purposeArg) => SetRoomPurposeAsync(Bot.Room, purposeArg.Value),
+    ({Value: "invite"}, IRoomArgument roomArg, _) => InviteUsersAsync(roomArg.Room, Bot.Arguments.Skip(1)), // Skip the invite part.
+    ({Value: "topic"}, IRoomArgument roomArg, var topicArg) => SetRoomTopicAsync(roomArg.Room, topicArg.Value),
     ({Value: "topic"}, var topicArg) => SetRoomTopicAsync(Bot.Room, topicArg.Value),
+    ({Value: "purpose"}, IRoomArgument roomArg, var purposeArg) => SetRoomPurposeAsync(roomArg.Room, purposeArg.Value),
     ({Value: "purpose"}, var purposeArg) => SetRoomPurposeAsync(Bot.Room, purposeArg.Value),
     _ => Bot.ReplyAsync($"`{Bot} help {Bot.SkillName}` for help on this skill.")
 };
@@ -26,21 +31,13 @@ async Task CreateRoomAsync(string room) {
     await Bot.ReplyAsync(reply);
 }
 
-Task InviteUsersAsync(IArguments args) {
+async Task InviteUsersAsync(IRoom room, IArguments args) {
     var users = args.OfType<IMentionArgument>().Select(m => m.Mentioned);
     if (!users.Any()) {
-        return Bot.ReplyAsync("Please mention at least one user to invite to the room.");
+        await Bot.ReplyAsync("Please mention at least one user to invite to the room.");
+        return;
     }
     
-    var rooms = args.OfType<IRoomArgument>().ToList();
-    return rooms switch {
-            {Count: 0} => Bot.ReplyAsync("Please specify a room to invite the users to."),
-            {Count: 2} => Bot.ReplyAsync("Please only specify one room to invite the users to."),
-            _ => InviteUsersToRoomAsync(rooms.Single().Room, users)
-    };
-}
-
-async Task InviteUsersToRoomAsync(IRoom room, IEnumerable<IChatUser> users) {
     var result = await Bot.Rooms.InviteUsersAsync(room, Bot.Mentions);
     var reply = result.Ok
         ? "Invitation(s) sent!"

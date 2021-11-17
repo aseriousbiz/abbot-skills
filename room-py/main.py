@@ -1,11 +1,11 @@
 """
-@abbot room-js create {room-name} - Creates a room with the given name.
-@abbot room-js topic #room {topic} - Sets a topic for the specified room
-@abbot room-js purpose #room  {purpose} - Sets a purpose for the specified room
-@abbot room-js topic {topic} - Sets a topic for the current room
-@abbot room-js purpose {purpose} - Sets a purpose for the current room
-@abbot room-js archive #room - Archives the specified room
-@abbot room-js invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
+@abbot room-py create {room-name} - Creates a room with the given name.
+@abbot room-py topic #room {topic} - Sets a topic for the specified room
+@abbot room-py purpose #room  {purpose} - Sets a purpose for the specified room
+@abbot room-py topic {topic} - Sets a topic for the current room
+@abbot room-py purpose {purpose} - Sets a purpose for the current room
+@abbot room-py archive #room - Archives the specified room
+@abbot room-py invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
 """
 def handle_topic(args):
     if (len(args) == 0):
