@@ -1,5 +1,4 @@
-﻿#load ".meta/globals.csx" // This is required for Intellisense in VS Code, etc. DO NOT TOUCH THIS LINE!
-/**
+﻿/**
  * @abbot room-cs create {room-name} - Creates a room with the given name.
  * @abbot room-cs topic #room {topic} - Sets a topic for the specified room
  * @abbot room-cs purpose #room  {purpose} - Sets a purpose for the specified room
