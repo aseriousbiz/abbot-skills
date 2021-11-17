@@ -1,12 +1,12 @@
 ﻿#load ".meta/globals.csx" // This is required for Intellisense in VS Code, etc. DO NOT TOUCH THIS LINE!
 /**
- * @abbot room create {room-name} - Creates a room with the given name.
- * @abbot room topic #room {topic} - Sets a topic for the specified room
- * @abbot room purpose #room  {purpose} - Sets a purpose for the specified room
- * @abbot room topic {topic} - Sets a topic for the current room
- * @abbot room purpose {purpose} - Sets a purpose for the current room
- * @abbot room archive #room - Archives the specified room
- * @abbot room invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
+ * @abbot room-cs create {room-name} - Creates a room with the given name.
+ * @abbot room-cs topic #room {topic} - Sets a topic for the specified room
+ * @abbot room-cs purpose #room  {purpose} - Sets a purpose for the specified room
+ * @abbot room-cs topic {topic} - Sets a topic for the current room
+ * @abbot room-cs purpose {purpose} - Sets a purpose for the current room
+ * @abbot room-cs archive #room - Archives the specified room
+ * @abbot room-cs invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
  */
 Task action = Bot.Arguments switch {
     ({Value: "create"}, var room) => CreateRoomAsync(room.Value),
