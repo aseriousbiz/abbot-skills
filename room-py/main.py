@@ -1,3 +1,12 @@
+"""
+@abbot room-js create {room-name} - Creates a room with the given name.
+@abbot room-js topic #room {topic} - Sets a topic for the specified room
+@abbot room-js purpose #room  {purpose} - Sets a purpose for the specified room
+@abbot room-js topic {topic} - Sets a topic for the current room
+@abbot room-js purpose {purpose} - Sets a purpose for the current room
+@abbot room-js archive #room - Archives the specified room
+@abbot room-js invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
+"""
 def handle_topic(args):
     if (len(args) == 0):
       bot.reply('Please specify a topic')
@@ -34,7 +43,7 @@ def create_room(args):
     room_name = args.value
     result = bot.rooms.create(room_name)
     if (result.ok):
-        bot.reply(f'Created room {result.value}. Invite users to the room with: `{bot} {bot.skill_name} invite @mention1 @mention2 ... to {result.value}`')
+        bot.reply(f'Created room {result.value}. Invite users to the room with: `{bot} {bot.skill_name} invite {result.value} @mention1 @mention2 ... @mentionN`')
     else:
         bot.reply(f'Error creating room {result.error}')
 
@@ -57,11 +66,11 @@ def archive_room(args):
         
 def invite_users_to_room(args):
     if (len(args) < 2):
-      bot.reply('Usage: `{bot} invite {#room} {@mention1} {@mention2} ... {@mentionN}`')
+      bot.reply(f'Usage: `{bot} {bot.skill_name} invite {{#room}} @mention1 @mention2 ... @mentionN`')
       return
     room_arg = args[0]
     if (not isinstance(room_arg, RoomArgument)):
-      bot.reply('Second argument must be a room reference. Usage: `{bot} invite {#room} {@mention1} {@mention2} ... {@mentionN}`')
+      bot.reply(f'Second argument must be a room reference. Usage: `{bot} {bot.skill_name} invite {{#room}} @mention1 @mention2 ... @mentionN`')
       return
     room = room_arg.room
     mention_args = filter(lambda arg: isinstance(arg, MentionArgument), args)
@@ -70,7 +79,11 @@ def invite_users_to_room(args):
       bot.reply("Need to mention at least one user to invite to the room.")
       return
     
-    bot.rooms.invite_users(room, users)
+    result = bot.rooms.invite_users(room, users)
+    if (result.ok):
+        bot.reply('Successfully invited users to room.')
+    else:
+        bot.reply(f'Error inviting users to room {result.error}')
 
     
 def get_room(arg):
