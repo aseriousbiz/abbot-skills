@@ -1,3 +1,4 @@
+module.exports.RoomJs = (async () => { // We modularize your code in order to run it.
 /**
  * @abbot room-js create {room-name} - Creates a room with the given name.
  * @abbot room-js topic #room {topic} - Sets a topic for the specified room
@@ -7,8 +8,6 @@
  * @abbot room-js archive #room - Archives the specified room
  * @abbot room-js invite #room @mention1 @mention2 ... @mentionN - Invites the specified users to the specified room
  */
-
-module.exports.RoomJs = (async () => { // We modularize your code in order to run it.
   if (bot.tokenizedArguments.length === 0) {
     await bot.reply(`\`${bot} help ${bot.skill_name}\` for help on this skill.`);
     return;
