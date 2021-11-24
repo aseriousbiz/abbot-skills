@@ -13,7 +13,7 @@ Manage GitHub deployments to deployment targets. A deployment target is a named 
 * `@abbot deploy list targets` - Lists available deployment targets.
 * `@abbot deploy add target {target}` - Adds a deployment target.
 * `@abbot deploy remove target {target}` - Removes a deployment target.
-* `@abbot deploy {branch or SHA} to {target} [for {owner}/{repo}]` - Creates a GitHub deployment of branch/SHA to a deployment target.
+* `@abbot deploy {branch or SHA} to {target} [for {owner}/{repo}]` - Creates a GitHub deployment of branch/SHA to a deployment target. To force a deploy add `--forced` at the very end.
 Note: You can specify a default repository for a room using `@abbot repo {owner}/{repo}`. that way you don't have to append each status command with `for {owner}/{repo}`.
 
 GitHub Deploy skill was inspired by https://github.com/stephenyeargin/hubot-github-deployments
@@ -29,7 +29,9 @@ if (githubToken is not {Length: > 0}) {
     return;
 }
 
-if (Bot.Arguments is { Count: 0 }) {
+var (forceArg, args) = Bot.Arguments.FindAndRemove(args => args.Value.Equals("--force", StringComparison.OrdinalIgnoreCase));
+
+if (args is { Count: 0 }) {
     await ReplyWithUsage();
     return;
 }
@@ -39,7 +41,7 @@ var github = new GitHubClient(new ProductHeaderValue("Abbot")) {
     Credentials = new Credentials(githubToken)
 };
 
-var (cmd, subject, preposition, ownerAndRepo) = Bot.Arguments;
+var (cmd, subject, preposition, ownerAndRepo) = args;
 
 if (cmd.Value is "repo") {
     if (subject is IMissingArgument) {
@@ -136,7 +138,9 @@ if (subject.Value is "to") {
         return;
     }
     var (owner, repo) = await GetOwnerAndRepo(ownerAndRepo);
-    
+    if (repo is null) {
+        return;
+    }
     var deployment = new NewDeployment(reference) {
         Environment = target,
         Task = DeployTask.Deploy,
@@ -147,6 +151,13 @@ if (subject.Value is "to") {
         },
         Description = $"{Bot.From.Name} deployed `{reference}` to `{target}`"
     };
+
+    var force = forceArg is not IMissingArgument;
+    if (force) {
+        await Bot.ReplyAsync("Forced? I hope you know what you're doing...");
+        deployment.RequiredContexts = new System.Collections.ObjectModel.Collection<string>();
+    }
+
     await Bot.ReplyAsync($"Creating deployment for ref {reference} to env: {target} for {owner}/{repo}.");
     var result = await github.Repository.Deployment.Create(owner, repo, deployment);
     await Bot.ReplyAsync(result.Description);
@@ -187,6 +198,10 @@ async Task<(string, string)> GetOwnerAndRepo(IArgument argument) {
     var (owner, repo) = ((string)null, (string)null);
     if (argument is IMissingArgument) {
         var ownerAndRepo = await GetDefaultRepository();
+        if (ownerAndRepo is null) {
+            await Bot.ReplyAsync($"No default repository is set for this room. Use `{Bot} {Bot.SkillName} repo {{owner}}/{{name}}` to set the repository.");
+            return (owner, repo);
+        }
         (owner, repo) = SplitOwnerAndRepo(ownerAndRepo);
     }
     else if (argument is IArguments arguments and {Count: 2}) {
