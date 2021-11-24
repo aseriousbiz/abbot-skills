@@ -29,7 +29,9 @@ if (githubToken is not {Length: > 0}) {
     return;
 }
 
-if (Bot.Arguments is { Count: 0 }) {
+var (forceArg, args) = Bot.Arguments.FindAndRemove(args => args.Value.Equals("--force", StringComparison.OrdinalIgnoreCase));
+
+if (args is { Count: 0 }) {
     await ReplyWithUsage();
     return;
 }
@@ -39,7 +41,7 @@ var github = new GitHubClient(new ProductHeaderValue("Abbot")) {
     Credentials = new Credentials(githubToken)
 };
 
-var (cmd, subject, preposition, ownerAndRepo, forcedArg) = Bot.Arguments;
+var (cmd, subject, preposition, ownerAndRepo) = args;
 
 if (cmd.Value is "repo") {
     if (subject is IMissingArgument) {
@@ -136,7 +138,9 @@ if (subject.Value is "to") {
         return;
     }
     var (owner, repo) = await GetOwnerAndRepo(ownerAndRepo);
-    
+    if (repo is null) {
+        return;
+    }
     var deployment = new NewDeployment(reference) {
         Environment = target,
         Task = DeployTask.Deploy,
@@ -148,8 +152,8 @@ if (subject.Value is "to") {
         Description = $"{Bot.From.Name} deployed `{reference}` to `{target}`"
     };
 
-    var forced = Bot.Arguments.Any(a => a.Value == "--force");
-    if (forced) {
+    var force = forceArg is not IMissingArgument;
+    if (force) {
         await Bot.ReplyAsync("Forced? I hope you know what you're doing...");
         deployment.RequiredContexts = new System.Collections.ObjectModel.Collection<string>();
     }
@@ -195,7 +199,7 @@ async Task<(string, string)> GetOwnerAndRepo(IArgument argument) {
     if (argument is IMissingArgument) {
         var ownerAndRepo = await GetDefaultRepository();
         if (ownerAndRepo is null) {
-            await Bot.ReplyAsync($"No default repository set. Use `{Bot} {Bot.SkillName} set default repo {{owner/repo}}` to set a default repo.");
+            await Bot.ReplyAsync($"No default repository is set for this room. Use `{Bot} {Bot.SkillName} repo {{owner}}/{{name}}` to set the repository.");
             return (owner, repo);
         }
         (owner, repo) = SplitOwnerAndRepo(ownerAndRepo);
